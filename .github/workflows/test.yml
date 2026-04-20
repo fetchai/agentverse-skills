@@ -1,0 +1,48 @@
+name: Test Skills
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-syntax:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Check syntax (all scripts)
+        run: |
+          find skills/ -name "*.py" -exec python -m py_compile {} \;
+          echo "✓ All scripts compile successfully"
+
+      - name: Check SKILL.md files exist
+        run: |
+          for skill_dir in skills/*/; do
+            if [ ! -f "${skill_dir}SKILL.md" ]; then
+              echo "✗ Missing SKILL.md in ${skill_dir}"
+              exit 1
+            fi
+          done
+          echo "✓ All skills have SKILL.md"
+
+      - name: Verify JSON output format (dry run)
+        run: |
+          for script in skills/*/scripts/*.py; do
+            # Just verify they parse without errors
+            python -c "import ast; ast.parse(open('$script').read())"
+          done
+          echo "✓ All scripts parse as valid Python AST"

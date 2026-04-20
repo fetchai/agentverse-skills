@@ -1,0 +1,37 @@
+{
+  "name": "@anthropic-fetchai/agentverse-skills",
+  "version": "1.0.0",
+  "description": "Agent skills for interacting with Fetch.ai's Agentverse — portable SKILL.md format for any AI coding agent",
+  "keywords": [
+    "agent-skills",
+    "skill-md",
+    "agentverse",
+    "fetch-ai",
+    "asi-alliance",
+    "ai-agents",
+    "uagents",
+    "chat-protocol",
+    "claude-code",
+    "codex",
+    "copilot",
+    "cursor"
+  ],
+  "files": [
+    "skills/",
+    "examples/",
+    "docs/"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fetchai/agentverse-skills"
+  },
+  "homepage": "https://agentverse.ai",
+  "bugs": {
+    "url": "https://github.com/fetchai/agentverse-skills/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "Fetch.ai <devops@fetch.ai>",
+  "engines": {
+    "node": ">=16"
+  }
+}
