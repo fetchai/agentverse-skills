@@ -38,6 +38,7 @@ import json
 import os
 import sys
 import time
+from typing import Optional
 
 try:
     import requests
@@ -82,7 +83,7 @@ def headers(api_key: str) -> dict:
     }
 
 
-def find_relay_agent(api_key: str) -> str | None:
+def find_relay_agent(api_key: str) -> Optional[str]:
     """Find an existing relay agent by name."""
     try:
         r = requests.get(BASE_URL, headers=headers(api_key), timeout=30)
@@ -97,7 +98,7 @@ def find_relay_agent(api_key: str) -> str | None:
     return None
 
 
-def create_relay_agent(api_key: str) -> str | None:
+def create_relay_agent(api_key: str) -> Optional[str]:
     """Create a new relay agent for chat relay."""
     try:
         r = requests.post(
@@ -262,7 +263,15 @@ def get_logs(api_key: str, agent_address: str) -> list:
 
 
 def extract_results(logs: list) -> list:
-    """Extract RESULT: entries from agent logs."""
+    """Extract RESULT: entries from agent logs.
+
+    Parses each RESULT: entry using a multi-stage strategy that handles:
+    - Valid JSON (direct json.loads)
+    - Python repr format (ast.literal_eval — correctly handles apostrophes)
+    - Raw strings as fallback (never silently drops content)
+    """
+    import ast
+
     results = []
     # Sort by timestamp to get chronological order
     sorted_logs = sorted(logs, key=lambda x: x.get("log_timestamp", ""))
@@ -270,14 +279,25 @@ def extract_results(logs: list) -> list:
         msg = entry.get("log_entry", "")
         if msg.startswith("RESULT:"):
             result_str = msg[7:]
-            # Try to parse as Python dict/JSON
+            parsed = None
+
+            # Stage 1: try direct JSON parsing (handles proper JSON)
             try:
-                # Handle Python repr format (single quotes → double quotes for JSON)
-                cleaned = result_str.replace("'", '"').replace("None", "null").replace("True", "true").replace("False", "false")
-                result_obj = json.loads(cleaned)
-                results.append(result_obj)
+                parsed = json.loads(result_str)
             except (json.JSONDecodeError, ValueError):
-                results.append(result_str)
+                pass
+
+            # Stage 2: try ast.literal_eval (handles Python repr with apostrophes,
+            # single-quoted strings, None/True/False)
+            if parsed is None:
+                try:
+                    parsed = ast.literal_eval(result_str)
+                except (ValueError, SyntaxError):
+                    pass
+
+            # Stage 3: fall back to raw string — never silently drop content
+            results.append(parsed if parsed is not None else result_str)
+
     return results
 
 
@@ -292,7 +312,7 @@ def extract_status(logs: list) -> str:
     return status
 
 
-def run_chat(target: str, message: str, wait: int, relay: str | None) -> dict:
+def run_chat(target: str, message: str, wait: int, relay: Optional[str]) -> dict:
     """Execute the full chat workflow."""
     api_key = get_api_key()
 

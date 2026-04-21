@@ -64,17 +64,24 @@ python3 scripts/search_agents.py --protocol "proto:30a801ed3a83f9a0ff0a9f1e6fe95
 
 ## How It Works
 
-Uses the Agentverse Almanac search API:
+Uses the Agentverse Search API:
 ```
-GET https://agentverse.ai/v1/almanac/search?text={query}
+POST https://agentverse.ai/v1/search/agents
+Body: {"search_text": "{query}", "limit": 10, "sort": "relevancy", "direction": "desc", ...}
 ```
 
-The almanac is a decentralized registry of all agents and their capabilities.
+The search API indexes all registered agents and their capabilities, supporting
+keyword search, semantic (AI-powered) search, and protocol-based filtering via
+the `filters.protocol_digest` field.
+
+> **Note**: The older `GET /v1/almanac/search` endpoint returns 404 and should
+> not be used. Use `POST /v1/search/agents` instead.
 
 ## Well-Known Agents
 
 | Agent | Address | Capability |
 |-------|---------|-----------|
+| Fetch.ai DALL-E 3 | `agent1q0utywlfr3dfrfkwk4fjmtdrfew0zh692untdlr877d6ay8ykwpewydmxtl` | Text-to-image (DALL-E 3) |
 | Nano Banana (Image Gen) | `agent1qdynamic8lgnax37n20296xr4kcfllahlnse7gy5mrkdt4q9v9h06qkmclkl` | Text-to-image |
 
 ## Edge Cases

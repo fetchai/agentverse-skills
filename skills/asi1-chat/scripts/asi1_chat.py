@@ -39,6 +39,7 @@ import argparse
 import json
 import os
 import sys
+from typing import Optional
 
 try:
     import requests
@@ -79,7 +80,7 @@ def chat_completion(
     api_key: str,
     prompt: str,
     model: str = DEFAULT_MODEL,
-    system: str | None = None,
+    system: Optional[str] = None,
     max_tokens: int = 1024,
     temperature: float = 0.7,
     stream: bool = False,
