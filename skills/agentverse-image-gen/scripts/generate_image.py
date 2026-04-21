@@ -24,6 +24,7 @@ Usage:
     python3 generate_image.py --prompt "A dragon breathing fire"
     python3 generate_image.py --prompt "Cyberpunk city" --agent agent1q...
     python3 generate_image.py --prompt "A cat in space" --wait 90
+    python3 generate_image.py --prompt "A cat in space" --cleanup
     python3 generate_image.py --search  # List available image gen agents
 
 Requirements:
@@ -35,7 +36,6 @@ Output:
 """
 
 import argparse
-import ast
 import json
 import os
 import re
@@ -43,9 +43,25 @@ import sys
 import time
 from typing import Optional
 
-# Pre-processing regex: strip UUID(...) calls so ast.literal_eval can parse Python reprs
-# that include uuid.UUID objects (e.g. from uagents ResourceContent).
-_UUID_RE = re.compile(r"\bUUID\('([0-9a-f-]+)'\)")
+# ---------------------------------------------------------------------------
+# Import shared relay utilities
+# ---------------------------------------------------------------------------
+_COMMON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "_common")
+sys.path.insert(0, _COMMON_DIR)
+from agentverse_relay import (  # noqa: E402
+    BASE_URL,
+    delete_agent,
+    extract_status,
+    find_or_create_relay,
+    get_api_key,
+    get_logs,
+    headers,
+    parse_result_entry,
+    set_logger,
+    start_agent,
+    stop_agent,
+    upload_code,
+)
 
 try:
     import requests
@@ -57,7 +73,6 @@ except ImportError:
     sys.exit(1)
 
 
-BASE_URL = "https://agentverse.ai/v1/hosting/agents"
 SEARCH_URL = "https://agentverse.ai/v1/search/agents"
 
 _AGENT_ADDR_RE = re.compile(r"^agent1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{59}$")
@@ -77,7 +92,6 @@ def validate_agent_address(address: str, flag_name: str = "--agent") -> None:
 # Use the official Fetch.ai DALL-E 3 agent (verified active in Almanac).
 # If this agent becomes unavailable, run `--search` to discover active alternatives.
 DEFAULT_IMAGE_AGENT = "agent1q0utywlfr3dfrfkwk4fjmtdrfew0zh692untdlr877d6ay8ykwpewydmxtl"  # Fetch.ai DALL-E 3
-RELAY_AGENT_NAME = "agentverse-skills-relay"
 
 # URL patterns that indicate an image has been delivered
 _IMAGE_URL_RE = re.compile(
@@ -98,30 +112,6 @@ _ERROR_KEYWORDS = ("error", "failed", "unable", "cannot", "could not", "sorry")
 def log(msg: str) -> None:
     """Print log message to stderr."""
     print(f"[agentverse-image-gen] {msg}", file=sys.stderr)
-
-
-def get_api_key() -> str:
-    """Get Agentverse API key from environment."""
-    key = os.environ.get("AGENTVERSE_API_KEY", "").strip()
-    if not key:
-        print(
-            json.dumps({
-                "status": "error",
-                "error": "AGENTVERSE_API_KEY environment variable not set. "
-                         "Get your key at https://agentverse.ai/profile/api-keys"
-            }),
-            file=sys.stdout,
-        )
-        sys.exit(1)
-    return key
-
-
-def headers(api_key: str) -> dict:
-    """Standard headers."""
-    return {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
 
 
 def search_image_agents(api_key: str) -> list:
@@ -166,41 +156,6 @@ def search_image_agents(api_key: str) -> list:
     return agents
 
 
-def find_relay_agent(api_key: str) -> Optional[str]:
-    """Find an existing relay agent."""
-    try:
-        r = requests.get(BASE_URL, headers=headers(api_key), timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        agents = data.get("items", data) if isinstance(data, dict) else data
-        for agent in agents:
-            if agent.get("name") == RELAY_AGENT_NAME:
-                return agent.get("address")
-        # Fallback: use any stopped agent
-        for agent in agents:
-            if not agent.get("running"):
-                return agent.get("address")
-    except Exception:
-        pass
-    return None
-
-
-def create_relay_agent(api_key: str) -> Optional[str]:
-    """Create a new relay agent."""
-    try:
-        r = requests.post(
-            BASE_URL,
-            headers=headers(api_key),
-            json={"name": RELAY_AGENT_NAME},
-            timeout=30,
-        )
-        if r.status_code in (200, 201):
-            return r.json().get("address")
-    except Exception:
-        pass
-    return None
-
-
 def build_image_gen_code(target_address: str, prompt: str) -> str:
     """Build hosted agent code that sends an image generation request."""
     escaped_prompt = prompt.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
@@ -243,30 +198,6 @@ async def handle_response(ctx: Context, sender: str, msg: ChatMessage):
 
 agent.include(protocol, publish_manifest=True)
 '''
-
-
-def _parse_result_entry(result_str: str):
-    """Parse a RESULT: log entry string into a Python object.
-
-    Uses a multi-stage strategy:
-    1. Direct json.loads (handles valid JSON)
-    2. ast.literal_eval after stripping UUID(...) calls (handles Python repr with
-       apostrophes and uagents UUID fields like resource_id)
-    3. Falls back to raw string — never silently drops content
-    """
-    try:
-        return json.loads(result_str)
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-    # Replace UUID('hex') with just 'hex' so ast.literal_eval can handle it
-    cleaned = _UUID_RE.sub(r"'\1'", result_str)
-    try:
-        return ast.literal_eval(cleaned)
-    except (ValueError, SyntaxError):
-        pass
-
-    return result_str
 
 
 def _is_image_uri(uri: str, metadata: dict) -> bool:
@@ -343,7 +274,14 @@ def _is_text_error(obj) -> bool:
     return any(kw in text.lower() for kw in _ERROR_KEYWORDS)
 
 
-def generate_image(api_key: str, prompt: str, target: str, wait: int, relay: Optional[str]) -> dict:
+def generate_image(
+    api_key: str,
+    prompt: str,
+    target: str,
+    wait: int,
+    relay: Optional[str],
+    cleanup: bool = False,
+) -> dict:
     """Execute the image generation workflow.
 
     Key behaviour (fixes issue #4):
@@ -353,172 +291,163 @@ def generate_image(api_key: str, prompt: str, target: str, wait: int, relay: Opt
         (a) A ResourceContent / image URL is found in the responses  ← success
         (b) A text response explicitly signals an error               ← fail-fast
         (c) The --wait timeout is exhausted                           ← timeout
+
+    Args:
+        api_key: Agentverse API key.
+        prompt: Image generation prompt.
+        target: Target image agent address.
+        wait: Max seconds to wait.
+        relay: Optional relay agent address (auto-detected if None).
+        cleanup: If True, delete the relay agent after use (when auto-created).
     """
     # Find or create relay
+    auto_created = False
     if relay:
         agent_address = relay
     else:
-        agent_address = find_relay_agent(api_key)
-        if not agent_address:
-            agent_address = create_relay_agent(api_key)
-        if not agent_address:
-            return {"status": "error", "error": "Could not find or create relay agent. Specify --relay."}
+        agent_address = find_or_create_relay(api_key)
+        auto_created = True
 
     log(f"Using relay agent: {agent_address}")
     log(f"Target image agent: {target}")
     log(f"Prompt: {prompt[:80]}...")
 
-    # Stop, upload code, start
     try:
-        requests.post(f"{BASE_URL}/{agent_address}/stop", headers=headers(api_key), timeout=30)
-    except Exception:
-        pass
-    time.sleep(2)
+        # Stop, upload code, start
+        stop_agent(api_key, agent_address)
+        time.sleep(2)
 
-    code = build_image_gen_code(target, prompt)
-    files = [{"language": "python", "name": "agent.py", "value": code}]
-    payload = {"code": json.dumps(files)}
+        code = build_image_gen_code(target, prompt)
 
-    try:
-        r = requests.put(
-            f"{BASE_URL}/{agent_address}/code",
-            headers=headers(api_key),
-            json=payload,
-            timeout=30,
-        )
-        if r.status_code not in (200, 201, 204):
-            return {"status": "error", "error": f"Code upload failed: {r.status_code}"}
-    except Exception as e:
-        return {"status": "error", "error": f"Code upload error: {e}"}
+        log("Uploading code...")
+        if not upload_code(api_key, agent_address, code):
+            return {"status": "error", "error": "Code upload failed"}
 
-    time.sleep(1)
+        time.sleep(1)
 
-    try:
-        r = requests.post(f"{BASE_URL}/{agent_address}/start", headers=headers(api_key), timeout=30)
-        if r.status_code not in (200, 201):
-            return {"status": "error", "error": f"Agent start failed: {r.status_code}"}
-    except Exception as e:
-        return {"status": "error", "error": f"Agent start error: {e}"}
+        log("Starting relay agent...")
+        if not start_agent(api_key, agent_address):
+            return {"status": "error", "error": "Agent start failed"}
 
-    # ------------------------------------------------------------------ #
-    # Polling loop — wait for image URL, not just any response            #
-    #                                                                     #
-    # Image agents typically send TWO responses:                          #
-    #   1. Text ACK: "Generating your image, please wait..."              #
-    #   2. Resource: {"type": "resource", "resource": {"uri": "..."}}     #
-    #                                                                     #
-    # We MUST NOT exit on the first text response.                        #
-    # ------------------------------------------------------------------ #
-    log(f"Waiting up to {wait}s for image URL (not just acknowledgement)...")
-    elapsed = 0
-    poll_interval = 5
-    seen_log_timestamps = set()
-    all_results = []       # All parsed RESULT: entries seen so far
-    image_url = None
-    image_metadata = {}
-    terminal_error = None
+        # -------------------------------------------------------------- #
+        # Polling loop — wait for image URL, not just any response        #
+        #                                                                 #
+        # Image agents typically send TWO responses:                      #
+        #   1. Text ACK: "Generating your image, please wait..."          #
+        #   2. Resource: {"type": "resource", "resource": {"uri": "..."}} #
+        #                                                                 #
+        # We MUST NOT exit on the first text response.                    #
+        # -------------------------------------------------------------- #
+        log(f"Waiting up to {wait}s for image URL (not just acknowledgement)...")
+        elapsed = 0
+        poll_interval = 5
+        seen_entries = set()        # Composite key: "timestamp:msg_prefix"
+        all_results = []            # All parsed RESULT: entries seen so far
+        image_url = None
+        image_metadata = {}
+        terminal_error = None
 
-    while elapsed < wait:
-        time.sleep(poll_interval)
-        elapsed += poll_interval
+        while elapsed < wait:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
 
-        try:
-            r = requests.get(
-                f"{BASE_URL}/{agent_address}/logs/latest",
-                headers=headers(api_key),
-                timeout=30,
-            )
-            if r.status_code != 200:
-                continue
-            logs = r.json() if isinstance(r.json(), list) else []
-        except Exception:
-            continue
-
-        # Process only new log entries
-        new_results_this_poll = []
-        for entry in sorted(logs, key=lambda x: x.get("log_timestamp", "")):
-            ts = entry.get("log_timestamp", "")
-            msg = entry.get("log_entry", "")
-            if ts in seen_log_timestamps:
-                continue
-            seen_log_timestamps.add(ts)
-
-            if not msg.startswith("RESULT:"):
+            logs = get_logs(api_key, agent_address)
+            if not logs:
                 continue
 
-            parsed = _parse_result_entry(msg[7:])
-            all_results.append(parsed)
-            new_results_this_poll.append(parsed)
+            # Process only new log entries — use composite key to avoid
+            # timestamp dedup collisions (issue #20).
+            new_results_this_poll = []
+            for entry in sorted(logs, key=lambda x: x.get("log_timestamp", "")):
+                ts = entry.get("log_timestamp", "")
+                msg = entry.get("log_entry", "")
+                # Composite dedup key: timestamp + first 100 chars of message
+                entry_key = f"{ts}:{msg[:100]}"
+                if entry_key in seen_entries:
+                    continue
+                seen_entries.add(entry_key)
 
-        # Check new entries for image URL or terminal error
-        for parsed in new_results_this_poll:
-            url = _extract_image_url(parsed)
-            if url:
-                image_url = url
-                # Try to grab metadata from the resource object
-                if isinstance(parsed, dict):
-                    res = parsed.get("resource", {})
-                    if isinstance(res, dict):
-                        image_metadata = res.get("metadata", {})
-                log(f"Image URL found after {elapsed}s: {image_url}")
+                if not msg.startswith("RESULT:"):
+                    continue
+
+                parsed = parse_result_entry(msg[7:])
+                all_results.append(parsed)
+                new_results_this_poll.append(parsed)
+
+            # Check new entries for image URL or terminal error
+            for parsed in new_results_this_poll:
+                url = _extract_image_url(parsed)
+                if url:
+                    image_url = url
+                    # Try to grab metadata from the resource object
+                    if isinstance(parsed, dict):
+                        res = parsed.get("resource", {})
+                        if isinstance(res, dict):
+                            image_metadata = res.get("metadata", {})
+                    log(f"Image URL found after {elapsed}s: {image_url}")
+                    break
+
+                # Check for a terminal error in text responses — no point waiting more
+                if _is_text_error(parsed):
+                    terminal_error = str(parsed)
+                    log(f"Terminal error in agent response after {elapsed}s: {terminal_error[:120]}")
+                    break
+
+            if image_url or terminal_error:
                 break
 
-            # Check for a terminal error in text responses — no point waiting more
-            if _is_text_error(parsed):
-                terminal_error = str(parsed)
-                log(f"Terminal error in agent response after {elapsed}s: {terminal_error[:120]}")
-                break
+            if all_results and not image_url:
+                log(f"  ...got text response(s), still waiting for image ({elapsed}/{wait}s)")
+            elif elapsed % 15 == 0:
+                log(f"  ...waiting ({elapsed}/{wait}s)")
 
-        if image_url or terminal_error:
-            break
+        # Stop agent
+        stop_agent(api_key, agent_address)
 
-        if all_results and not image_url:
-            log(f"  ...got text response(s), still waiting for image ({elapsed}/{wait}s)")
-        elif elapsed % 15 == 0:
-            log(f"  ...waiting ({elapsed}/{wait}s)")
+        # Build output
+        if image_url:
+            return {
+                "status": "success",
+                "prompt": prompt,
+                "image_url": image_url,
+                "metadata": image_metadata,
+                "target_agent": target,
+                "relay_agent": agent_address,
+                "wait_time_seconds": elapsed,
+                "all_responses": all_results,
+            }
 
-    # Stop agent
-    try:
-        requests.post(f"{BASE_URL}/{agent_address}/stop", headers=headers(api_key), timeout=30)
-    except Exception:
-        pass
+        if terminal_error:
+            return {
+                "status": "error",
+                "error": f"Image generation failed: {terminal_error}",
+                "prompt": prompt,
+                "target_agent": target,
+                "relay_agent": agent_address,
+                "all_responses": all_results,
+            }
 
-    # Build output
-    if image_url:
+        # Timeout — but still include any text responses received (useful for debugging)
         return {
-            "status": "success",
-            "prompt": prompt,
-            "image_url": image_url,
-            "metadata": image_metadata,
-            "target_agent": target,
-            "relay_agent": agent_address,
-            "wait_time_seconds": elapsed,
-            "all_responses": all_results,
-        }
-
-    if terminal_error:
-        return {
-            "status": "error",
-            "error": f"Image generation failed: {terminal_error}",
+            "status": "timeout",
+            "error": (
+                f"No image URL received within {wait}s. "
+                "Image generation may take longer — try increasing --wait. "
+                f"Received {len(all_results)} text response(s) but no image URL."
+            ),
             "prompt": prompt,
             "target_agent": target,
             "relay_agent": agent_address,
             "all_responses": all_results,
         }
-
-    # Timeout — but still include any text responses received (useful for debugging)
-    return {
-        "status": "timeout",
-        "error": (
-            f"No image URL received within {wait}s. "
-            "Image generation may take longer — try increasing --wait. "
-            f"Received {len(all_results)} text response(s) but no image URL."
-        ),
-        "prompt": prompt,
-        "target_agent": target,
-        "relay_agent": agent_address,
-        "all_responses": all_results,
-    }
+    finally:
+        # Cleanup: delete the relay agent if --cleanup was requested and we auto-managed it
+        if cleanup and auto_created:
+            log("Cleaning up relay agent...")
+            if delete_agent(api_key, agent_address):
+                log(f"Relay agent deleted: {agent_address}")
+            else:
+                log(f"Warning: failed to delete relay agent: {agent_address}")
 
 
 def main():
@@ -548,6 +477,10 @@ def main():
         help="Search for available image generation agents instead of generating",
     )
     parser.add_argument(
+        "--cleanup", action="store_true",
+        help="Delete the relay agent after use (prevents accumulation of relay agents)",
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Enable verbose logging to stderr",
     )
@@ -557,6 +490,9 @@ def main():
     if not args.verbose:
         global log
         log = lambda msg: None  # noqa: E731
+
+    # Wire the shared module's logger to our log function
+    set_logger(log)
 
     api_key = get_api_key()
 
@@ -584,6 +520,7 @@ def main():
         target=args.agent,
         wait=args.wait,
         relay=args.relay,
+        cleanup=args.cleanup,
     )
 
     print(json.dumps(result, indent=2))
