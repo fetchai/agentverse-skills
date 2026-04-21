@@ -40,6 +40,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 try:
     import requests
@@ -279,6 +280,57 @@ def cmd_code(api_key: str, agent_address: str) -> dict:
         return {"status": "error", "error": f"Request failed: {str(e)}"}
 
 
+def cmd_restart(api_key: str, agent_address: str, delay: int = 3) -> dict:
+    """Restart a hosted agent (stop → wait → start).
+
+    If the agent is already stopped, the stop step is skipped gracefully
+    and the start proceeds immediately.
+    """
+    log(f"Restarting agent: {agent_address}")
+
+    # Stop (tolerate if already stopped)
+    try:
+        r = requests.post(
+            f"{BASE_URL}/{agent_address}/stop",
+            headers=headers(api_key),
+            timeout=30,
+        )
+        if r.status_code in (200, 201):
+            log("Agent stopped")
+        else:
+            # If stop fails with non-fatal code, just continue to start
+            log(f"Stop returned {r.status_code} (proceeding with start)")
+    except requests.exceptions.RequestException as e:
+        log(f"Stop request failed (proceeding with start): {e}")
+
+    # Brief pause so the platform can settle before restart
+    time.sleep(delay)
+
+    # Start
+    try:
+        r = requests.post(
+            f"{BASE_URL}/{agent_address}/start",
+            headers=headers(api_key),
+            timeout=30,
+        )
+        if r.status_code in (200, 201):
+            data = r.json()
+            return {
+                "status": "success",
+                "action": "restart",
+                "agent": agent_address,
+                "running": data.get("running", True),
+                "name": data.get("name", ""),
+            }
+        else:
+            return {
+                "status": "error",
+                "error": f"Restart: start failed with HTTP {r.status_code}: {r.text[:200]}",
+            }
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "error": f"Restart: start request failed: {str(e)}"}
+
+
 def cmd_info(api_key: str, agent_address: str) -> dict:
     """Get detailed info about a hosted agent."""
     try:
@@ -322,24 +374,25 @@ def main():
         description="Manage hosted Agentverse agents.",
         epilog=(
             "Commands:\n"
-            "  list    List all hosted agents\n"
-            "  start   Start a hosted agent\n"
-            "  stop    Stop a hosted agent\n"
-            "  logs    Get latest logs from an agent\n"
-            "  delete  Delete a hosted agent\n"
-            "  code    View agent source code\n"
-            "  info    Get detailed agent info\n"
+            "  list     List all hosted agents\n"
+            "  start    Start a hosted agent\n"
+            "  stop     Stop a hosted agent\n"
+            "  restart  Restart a hosted agent (stop then start)\n"
+            "  logs     Get latest logs from an agent\n"
+            "  delete   Delete a hosted agent\n"
+            "  code     View agent source code\n"
+            "  info     Get detailed agent info\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "command",
-        choices=["list", "start", "stop", "logs", "delete", "code", "info"],
+        choices=["list", "start", "stop", "restart", "logs", "delete", "code", "info"],
         help="Action to perform",
     )
     parser.add_argument(
         "--agent", "-a",
-        help="Agent address (required for start/stop/logs/delete/code/info)",
+        help="Agent address (required for start/stop/restart/logs/delete/code/info)",
     )
     parser.add_argument(
         "--running", action="store_true",
@@ -348,6 +401,10 @@ def main():
     parser.add_argument(
         "--tail", "-t", type=int, default=50,
         help="Number of log entries to show (for 'logs' command, default: 50)",
+    )
+    parser.add_argument(
+        "--delay", type=int, default=3,
+        help="Seconds to wait between stop and start for 'restart' command (default: 3)",
     )
     parser.add_argument(
         "--verbose", action="store_true",
@@ -361,7 +418,7 @@ def main():
         log = lambda msg: None  # noqa: E731
 
     # Validate that --agent is provided for commands that need it
-    if args.command in ("start", "stop", "logs", "delete", "code", "info") and not args.agent:
+    if args.command in ("start", "stop", "restart", "logs", "delete", "code", "info") and not args.agent:
         parser.error(f"--agent is required for '{args.command}' command")
         sys.exit(1)
 
@@ -374,6 +431,8 @@ def main():
         result = cmd_start(api_key, args.agent)
     elif args.command == "stop":
         result = cmd_stop(api_key, args.agent)
+    elif args.command == "restart":
+        result = cmd_restart(api_key, args.agent, delay=args.delay)
     elif args.command == "logs":
         result = cmd_logs(api_key, args.agent, tail=args.tail)
     elif args.command == "delete":
