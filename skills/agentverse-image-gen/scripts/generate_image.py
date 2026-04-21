@@ -35,11 +35,17 @@ Output:
 """
 
 import argparse
+import ast
 import json
 import os
+import re
 import sys
 import time
 from typing import Optional
+
+# Pre-processing regex: strip UUID(...) calls so ast.literal_eval can parse Python reprs
+# that include uuid.UUID objects (e.g. from uagents ResourceContent).
+_UUID_RE = re.compile(r"\bUUID\('([0-9a-f-]+)'\)")
 
 try:
     import requests
@@ -59,6 +65,21 @@ SEARCH_URL = "https://agentverse.ai/v1/search/agents"
 # If this agent becomes unavailable, run `--search` to discover active alternatives.
 DEFAULT_IMAGE_AGENT = "agent1q0utywlfr3dfrfkwk4fjmtdrfew0zh692untdlr877d6ay8ykwpewydmxtl"  # Fetch.ai DALL-E 3
 RELAY_AGENT_NAME = "agentverse-skills-relay"
+
+# URL patterns that indicate an image has been delivered
+_IMAGE_URL_RE = re.compile(
+    r'https?://[^\s\'"<>)]+\.(png|jpg|jpeg|webp|gif)(\?[^\s\'"<>)]*)?',
+    re.IGNORECASE,
+)
+_IMAGE_CDN_RE = re.compile(
+    r'https?://[^\s\'"<>)]*(?:cloudinary|imgur|i\.ibb\.co|openai\.com/files|'
+    r'oaidalleapiprodscus\.blob\.core\.windows\.net|'
+    r'cdn\.discordapp\.com)[^\s\'"<>)]*',
+    re.IGNORECASE,
+)
+
+# Keywords in a text response that indicate a terminal error (no image coming)
+_ERROR_KEYWORDS = ("error", "failed", "unable", "cannot", "could not", "sorry")
 
 
 def log(msg: str) -> None:
@@ -211,8 +232,115 @@ agent.include(protocol, publish_manifest=True)
 '''
 
 
+def _parse_result_entry(result_str: str):
+    """Parse a RESULT: log entry string into a Python object.
+
+    Uses a multi-stage strategy:
+    1. Direct json.loads (handles valid JSON)
+    2. ast.literal_eval after stripping UUID(...) calls (handles Python repr with
+       apostrophes and uagents UUID fields like resource_id)
+    3. Falls back to raw string — never silently drops content
+    """
+    try:
+        return json.loads(result_str)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Replace UUID('hex') with just 'hex' so ast.literal_eval can handle it
+    cleaned = _UUID_RE.sub(r"'\1'", result_str)
+    try:
+        return ast.literal_eval(cleaned)
+    except (ValueError, SyntaxError):
+        pass
+
+    return result_str
+
+
+def _is_image_uri(uri: str, metadata: dict) -> bool:
+    """Return True if a URI appears to be an image (by URL pattern or mime type)."""
+    if not uri:
+        return False
+    # Explicit image mime type in metadata
+    mime = metadata.get("mime_type", "")
+    if mime.startswith("image/"):
+        return True
+    # URL pattern matches
+    if _IMAGE_URL_RE.search(uri) or _IMAGE_CDN_RE.search(uri):
+        return True
+    # agent-storage:// URIs always carry images from image-gen agents
+    if uri.startswith("agent-storage://"):
+        return True
+    return False
+
+
+def _extract_image_url(obj) -> Optional[str]:
+    """Try to find an image URL in a parsed result object or raw string.
+
+    Handles:
+    - ResourceContent dicts: {"type": "resource", "resource": {"uri": "...", "metadata": {...}}}
+    - Flat resource dicts: {"resource": {"uri": "..."}}
+    - agent-storage:// URIs (used by hosted Agentverse image agents)
+    - CDN / extension-based image URLs in raw strings
+
+    Returns the URI string if an image is detected, None otherwise.
+    """
+    if isinstance(obj, dict):
+        # ResourceContent shape: {"type": "resource", "resource": {"uri": "..."}}
+        resource = obj.get("resource", {})
+        if not isinstance(resource, dict):
+            resource = {}
+
+        uri = resource.get("uri", "")
+        metadata = resource.get("metadata", {}) if isinstance(resource.get("metadata"), dict) else {}
+
+        # Also accept top-level type=="resource" even without nested resource key
+        if not uri and obj.get("type") == "resource":
+            uri = obj.get("uri", "")
+
+        if uri and _is_image_uri(uri, metadata):
+            return uri
+
+    # Scan raw string for image-like URLs (covers partially-parsed or repr strings)
+    raw = str(obj)
+
+    # agent-storage:// URIs
+    m = re.search(r"agent-storage://[^\s'\",)]+", raw)
+    if m:
+        return m.group(0).strip("'\"(),")
+
+    # Standard http/https image URLs
+    for pattern in (_IMAGE_URL_RE, _IMAGE_CDN_RE):
+        m = pattern.search(raw)
+        if m:
+            return m.group(0).strip("'\"(),")
+
+    return None
+
+
+def _is_text_error(obj) -> bool:
+    """Return True if the response is a text error message (no image will follow)."""
+    text = ""
+    if isinstance(obj, dict):
+        if obj.get("type") == "text":
+            text = str(obj.get("text", ""))
+        elif "text" in obj:
+            text = str(obj["text"])
+    elif isinstance(obj, str):
+        text = obj
+    return any(kw in text.lower() for kw in _ERROR_KEYWORDS)
+
+
 def generate_image(api_key: str, prompt: str, target: str, wait: int, relay: Optional[str]) -> dict:
-    """Execute the image generation workflow."""
+    """Execute the image generation workflow.
+
+    Key behaviour (fixes issue #4):
+    - Does NOT exit on the first text response — many image agents send an
+      acknowledgement text ("Generating your image...") before the actual image.
+    - Keeps polling until one of:
+        (a) A ResourceContent / image URL is found in the responses  ← success
+        (b) A text response explicitly signals an error               ← fail-fast
+        (c) The --wait timeout is exhausted                           ← timeout
+    """
     # Find or create relay
     if relay:
         agent_address = relay
@@ -259,11 +387,23 @@ def generate_image(api_key: str, prompt: str, target: str, wait: int, relay: Opt
     except Exception as e:
         return {"status": "error", "error": f"Agent start error: {e}"}
 
-    # Wait and poll for results
-    log(f"Waiting up to {wait}s for image generation...")
+    # ------------------------------------------------------------------ #
+    # Polling loop — wait for image URL, not just any response            #
+    #                                                                     #
+    # Image agents typically send TWO responses:                          #
+    #   1. Text ACK: "Generating your image, please wait..."              #
+    #   2. Resource: {"type": "resource", "resource": {"uri": "..."}}     #
+    #                                                                     #
+    # We MUST NOT exit on the first text response.                        #
+    # ------------------------------------------------------------------ #
+    log(f"Waiting up to {wait}s for image URL (not just acknowledgement)...")
     elapsed = 0
     poll_interval = 5
-    results = []
+    seen_log_timestamps = set()
+    all_results = []       # All parsed RESULT: entries seen so far
+    image_url = None
+    image_metadata = {}
+    terminal_error = None
 
     while elapsed < wait:
         time.sleep(poll_interval)
@@ -275,20 +415,53 @@ def generate_image(api_key: str, prompt: str, target: str, wait: int, relay: Opt
                 headers=headers(api_key),
                 timeout=30,
             )
-            if r.status_code == 200:
-                logs = r.json() if isinstance(r.json(), list) else []
-                sorted_logs = sorted(logs, key=lambda x: x.get("log_timestamp", ""))
-                for entry in sorted_logs:
-                    msg = entry.get("log_entry", "")
-                    if msg.startswith("RESULT:"):
-                        results.append(msg[7:])
-                if results:
-                    log(f"Got response after {elapsed}s")
-                    break
+            if r.status_code != 200:
+                continue
+            logs = r.json() if isinstance(r.json(), list) else []
         except Exception:
-            pass
+            continue
 
-        if elapsed % 15 == 0:
+        # Process only new log entries
+        new_results_this_poll = []
+        for entry in sorted(logs, key=lambda x: x.get("log_timestamp", "")):
+            ts = entry.get("log_timestamp", "")
+            msg = entry.get("log_entry", "")
+            if ts in seen_log_timestamps:
+                continue
+            seen_log_timestamps.add(ts)
+
+            if not msg.startswith("RESULT:"):
+                continue
+
+            parsed = _parse_result_entry(msg[7:])
+            all_results.append(parsed)
+            new_results_this_poll.append(parsed)
+
+        # Check new entries for image URL or terminal error
+        for parsed in new_results_this_poll:
+            url = _extract_image_url(parsed)
+            if url:
+                image_url = url
+                # Try to grab metadata from the resource object
+                if isinstance(parsed, dict):
+                    res = parsed.get("resource", {})
+                    if isinstance(res, dict):
+                        image_metadata = res.get("metadata", {})
+                log(f"Image URL found after {elapsed}s: {image_url}")
+                break
+
+            # Check for a terminal error in text responses — no point waiting more
+            if _is_text_error(parsed):
+                terminal_error = str(parsed)
+                log(f"Terminal error in agent response after {elapsed}s: {terminal_error[:120]}")
+                break
+
+        if image_url or terminal_error:
+            break
+
+        if all_results and not image_url:
+            log(f"  ...got text response(s), still waiting for image ({elapsed}/{wait}s)")
+        elif elapsed % 15 == 0:
             log(f"  ...waiting ({elapsed}/{wait}s)")
 
     # Stop agent
@@ -297,62 +470,42 @@ def generate_image(api_key: str, prompt: str, target: str, wait: int, relay: Opt
     except Exception:
         pass
 
-    # Parse results
-    if not results:
+    # Build output
+    if image_url:
         return {
-            "status": "timeout",
-            "error": f"No response received within {wait}s. Image generation may take longer — try increasing --wait.",
+            "status": "success",
+            "prompt": prompt,
+            "image_url": image_url,
+            "metadata": image_metadata,
+            "target_agent": target,
             "relay_agent": agent_address,
-            "target": target,
+            "wait_time_seconds": elapsed,
+            "all_responses": all_results,
         }
 
-    # Extract image URL from results
-    image_url = None
-    metadata = {}
-    all_content = []
+    if terminal_error:
+        return {
+            "status": "error",
+            "error": f"Image generation failed: {terminal_error}",
+            "prompt": prompt,
+            "target_agent": target,
+            "relay_agent": agent_address,
+            "all_responses": all_results,
+        }
 
-    for result_str in results:
-        try:
-            cleaned = result_str.replace("'", '"').replace("None", "null").replace("True", "true").replace("False", "false")
-            result_obj = json.loads(cleaned)
-            all_content.append(result_obj)
-
-            # Check for ResourceContent (image)
-            if isinstance(result_obj, dict):
-                resource = result_obj.get("resource", {})
-                if resource and resource.get("uri"):
-                    image_url = resource["uri"]
-                    metadata = resource.get("metadata", {})
-                # Also check nested structures
-                if result_obj.get("type") == "resource":
-                    res = result_obj.get("resource", {})
-                    if res.get("uri"):
-                        image_url = res["uri"]
-                        metadata = res.get("metadata", {})
-        except (json.JSONDecodeError, ValueError):
-            all_content.append(result_str)
-            # Try to find URL in raw string
-            if "http" in result_str and ("cloudinary" in result_str or "imgur" in result_str or ".png" in result_str or ".jpg" in result_str):
-                # Extract URL from string
-                for part in result_str.split():
-                    if part.startswith("http"):
-                        image_url = part.strip("'\"(),")
-                        break
-
-    output = {
-        "status": "success",
+    # Timeout — but still include any text responses received (useful for debugging)
+    return {
+        "status": "timeout",
+        "error": (
+            f"No image URL received within {wait}s. "
+            "Image generation may take longer — try increasing --wait. "
+            f"Received {len(all_results)} text response(s) but no image URL."
+        ),
         "prompt": prompt,
         "target_agent": target,
         "relay_agent": agent_address,
-        "wait_time_seconds": elapsed,
-        "content": all_content,
+        "all_responses": all_results,
     }
-
-    if image_url:
-        output["image_url"] = image_url
-        output["metadata"] = metadata
-
-    return output
 
 
 def main():
@@ -370,8 +523,8 @@ def main():
         help=f"Target image generation agent address (default: Fetch.ai DALL-E 3 {DEFAULT_IMAGE_AGENT[:20]}...)",
     )
     parser.add_argument(
-        "--wait", "-w", type=int, default=60,
-        help="Max seconds to wait for image generation (default: 60)",
+        "--wait", "-w", type=int, default=90,
+        help="Max seconds to wait for image generation (default: 90)",
     )
     parser.add_argument(
         "--relay",
