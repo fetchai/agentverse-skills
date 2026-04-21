@@ -36,6 +36,7 @@ Output:
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from typing import Optional
@@ -52,6 +53,19 @@ except ImportError:
 
 BASE_URL = "https://agentverse.ai/v1/hosting/agents"
 RELAY_AGENT_NAME = "agentverse-skills-relay"
+
+_AGENT_ADDR_RE = re.compile(r"^agent1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{59}$")
+
+
+def validate_agent_address(address: str, flag_name: str = "--target") -> None:
+    """Validate agent address format (bech32, 65 chars)."""
+    if not _AGENT_ADDR_RE.match(address):
+        print(json.dumps({
+            "status": "error",
+            "error": f"Invalid agent address format: {address!r}",
+            "hint": "Expected format: agent1q... (65 characters). Use agentverse-search to find addresses.",
+        }))
+        sys.exit(1)
 
 
 def log(msg: str) -> None:
@@ -481,6 +495,8 @@ def main():
         # Suppress log messages unless verbose
         global log
         log = lambda msg: None  # noqa: E731
+
+    validate_agent_address(args.target, "--target")
 
     result = run_chat(
         target=args.target,

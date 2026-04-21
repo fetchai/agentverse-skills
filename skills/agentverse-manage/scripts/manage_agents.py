@@ -39,6 +39,7 @@ Output:
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -53,6 +54,19 @@ except ImportError:
 
 
 BASE_URL = "https://agentverse.ai/v1/hosting/agents"
+
+_AGENT_ADDR_RE = re.compile(r"^agent1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{59}$")
+
+
+def validate_agent_address(address: str, flag_name: str = "--agent") -> None:
+    """Validate agent address format (bech32, 65 chars)."""
+    if not _AGENT_ADDR_RE.match(address):
+        print(json.dumps({
+            "status": "error",
+            "error": f"Invalid agent address format: {address!r}",
+            "hint": "Expected format: agent1q... (65 characters). Use agentverse-search to find addresses.",
+        }))
+        sys.exit(1)
 
 
 def log(msg: str) -> None:
@@ -421,6 +435,9 @@ def main():
     if args.command in ("start", "stop", "restart", "logs", "delete", "code", "info") and not args.agent:
         parser.error(f"--agent is required for '{args.command}' command")
         sys.exit(1)
+
+    if args.agent:
+        validate_agent_address(args.agent, "--agent")
 
     api_key = get_api_key()
 

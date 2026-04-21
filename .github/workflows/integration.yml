@@ -85,6 +85,6 @@ jobs:
           import sys, json
           data = json.load(sys.stdin)
           assert data.get('status') == 'success', f'ASI:One failed: {data}'
-          assert len(data.get('content', '')) > 0, 'ASI:One returned empty content'
-          print(f'✓ ASI:One responded: {data[\"content\"][:80]}...')
+          assert len(data.get('response', '')) > 0, 'ASI:One returned empty response'
+          print(f'✓ ASI:One responded: {data[\"response\"][:80]}...')
           "
