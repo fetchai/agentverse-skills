@@ -8,6 +8,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+
+- **`asi1-chat`**: Default model changed from `asi1-mini` to `asi1` — aligns with Fetch.ai Innovation Labs docs and community usage. `asi1-mini` remains available via `--model asi1-mini` for lower-latency use cases.
+- **All docs**: Updated examples, API reference, and authentication guide to use `asi1` as the default model.
+
+### Improved
+
+- **`docs/troubleshooting.md`**: Expanded timeout guidance with a cheat sheet of recommended `--wait` values per operation, retry advice, and streaming tips.
+
 ---
 
 ## [1.1.0] — 2026-04-21

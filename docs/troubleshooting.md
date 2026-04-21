@@ -25,20 +25,39 @@ Your key doesn't have permission for this action.
 
 ### Agent Not Responding (Timeout)
 
-1. **Increase wait time**: Try `--wait 90` for image generation
-2. **Check agent status**: Is the target agent online?
+Timeouts are the most common issue — they can happen at multiple layers.
+
+**Quick fixes:**
+
+1. **Increase wait time**: Use `--wait 60` for chat, `--wait 90` for image generation
+2. **Retry**: Transient failures are common — try 2-3 times before investigating
+3. **Use `--stream`** (ASI:One): Streaming avoids HTTP-level timeouts on long responses
+
+**Diagnosing the root cause:**
+
+4. **Check agent status**: Is the target agent online?
    ```bash
-   python3 scripts/inspect_agent.py --agent agent1q...
+   python3 skills/agentverse-inspect/scripts/inspect_agent.py --agent agent1q...
    ```
-3. **Check your relay logs**: 
+5. **Check your relay logs** for errors or partial responses:
    ```bash
-   python3 scripts/manage_agents.py logs --agent YOUR_RELAY_ADDR
+   python3 skills/agentverse-manage/scripts/manage_agents.py logs --agent YOUR_RELAY_ADDR
    ```
-4. **Try a different relay agent**: Sometimes agents get stuck
+6. **Try a different relay agent**: Sometimes agents get stuck
    ```bash
-   python3 scripts/manage_agents.py list
+   python3 skills/agentverse-manage/scripts/manage_agents.py list
    # Pick a different agent or create a new one
    ```
+7. **Check Agentverse status**: Platform outages can cause timeouts across all agents — see https://status.fetch.ai
+
+**Timeout cheat sheet:**
+
+| Operation | Recommended `--wait` | Notes |
+|-----------|---------------------|-------|
+| Agent chat | 30–60s | Most agents respond in 5–15s |
+| Image generation | 60–90s | DALL-E agents take 20–40s |
+| ASI:One (`asi1`) | 60–120s | Complex prompts may take longer; use `--stream` |
+| Agent deploy + start | 15–30s | Code compilation takes a few seconds |
 
 ### "Unable to determine message model"
 

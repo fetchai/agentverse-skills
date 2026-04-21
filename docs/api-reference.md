@@ -195,7 +195,7 @@ Authorization: Bearer {ASI_ONE_API_KEY}
 Content-Type: application/json
 
 {
-  "model": "asi1-mini",
+  "model": "asi1",
   "messages": [
     {"role": "system", "content": "You are helpful."},
     {"role": "user", "content": "Hello!"}
@@ -206,5 +206,5 @@ Content-Type: application/json
 ```
 
 Models:
-- `asi1` — Full model (higher quality, slower)
-- `asi1-mini` — Mini model (faster, cheaper)
+- `asi1` — Full model (default, recommended)
+- `asi1-mini` — Mini model (faster, lighter)

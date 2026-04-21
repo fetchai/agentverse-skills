@@ -11,14 +11,14 @@ Ask ASI:One to research a topic, then use an image agent to visualize it.
 ```bash
 $ python3 skills/asi1-chat/scripts/asi1_chat.py \
     --prompt "Describe the most interesting visual concept for an AI agent marketplace. Be vivid and specific in 2 sentences." \
-    --model asi1-mini
+    --model asi1
 ```
 
 Output:
 ```json
 {
   "status": "success",
-  "model": "asi1-mini",
+  "model": "asi1",
   "response": "Imagine a vast crystalline bazaar floating in cyberspace, where holographic AI agents of every shape — from geometric fractals to humanoid advisors — hover at translucent stalls, each radiating data streams that connect to seekers below. The marketplace pulses with bioluminescent energy as transactions flow like rivers of light between buyers and autonomous digital merchants."
 }
 ```

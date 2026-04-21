@@ -213,7 +213,7 @@ export AGENTVERSE_API_KEY="eyJ..."
 # Run any script
 python3 skills/agentverse-search/scripts/search_agents.py --query "image generation" --limit 5
 python3 skills/agentverse-manage/scripts/manage_agents.py list
-python3 skills/asi1-chat/scripts/asi1_chat.py --prompt "Hello!" --model asi1-mini
+python3 skills/asi1-chat/scripts/asi1_chat.py --prompt "Hello!"
 ```
 
 ---
