@@ -39,6 +39,7 @@ import argparse
 import json
 import os
 import sys
+from typing import Optional
 
 try:
     import requests
@@ -89,7 +90,7 @@ def search_agents(
     offset: int = 0,
     semantic: bool = False,
     sort: str = "relevancy",
-    protocol: str | None = None,
+    protocol: Optional[str] = None,
 ) -> dict:
     """Search for agents in the Agentverse registry."""
     url = f"{BASE_URL}/v1/search/agents"
@@ -107,7 +108,9 @@ def search_agents(
     }
 
     if protocol:
-        payload["protocol_digest"] = protocol
+        # The API requires protocol_digest as a list inside the `filters` object.
+        # Sending it as a top-level field returns 422 "Extra inputs are not permitted".
+        payload["filters"] = {"protocol_digest": [protocol]}
 
     try:
         r = requests.post(url, headers=headers(api_key), json=payload, timeout=30)

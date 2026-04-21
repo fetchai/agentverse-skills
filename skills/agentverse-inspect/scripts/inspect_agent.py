@@ -37,6 +37,7 @@ import argparse
 import json
 import os
 import sys
+from typing import Optional
 
 try:
     import requests
@@ -56,12 +57,12 @@ def log(msg: str) -> None:
     print(f"[agentverse-inspect] {msg}", file=sys.stderr)
 
 
-def get_api_key() -> str | None:
+def get_api_key() -> Optional[str]:
     """Get Agentverse API key from environment (optional for public endpoints)."""
     return os.environ.get("AGENTVERSE_API_KEY", "").strip() or None
 
 
-def headers(api_key: str | None) -> dict:
+def headers(api_key: Optional[str]) -> dict:
     """Standard headers."""
     h = {"Content-Type": "application/json"}
     if api_key:
@@ -69,7 +70,7 @@ def headers(api_key: str | None) -> dict:
     return h
 
 
-def get_almanac_info(agent_address: str, api_key: str | None) -> dict | None:
+def get_almanac_info(agent_address: str, api_key: Optional[str]) -> Optional[dict]:
     """Get agent info from the V1 Almanac (public, no auth needed)."""
     url = f"{BASE_URL}/v1/almanac/agents/{agent_address}"
     try:
@@ -87,7 +88,7 @@ def get_almanac_info(agent_address: str, api_key: str | None) -> dict | None:
         return None
 
 
-def get_search_info(agent_address: str, api_key: str | None) -> dict | None:
+def get_search_info(agent_address: str, api_key: Optional[str]) -> Optional[dict]:
     """Search for agent in the registry to get rich metadata."""
     if not api_key:
         return None
@@ -122,7 +123,7 @@ def get_search_info(agent_address: str, api_key: str | None) -> dict | None:
         return None
 
 
-def get_hosting_info(agent_address: str, api_key: str | None) -> dict | None:
+def get_hosting_info(agent_address: str, api_key: Optional[str]) -> Optional[dict]:
     """Get hosting profile (public endpoint)."""
     if not api_key:
         return None
@@ -137,7 +138,7 @@ def get_hosting_info(agent_address: str, api_key: str | None) -> dict | None:
         return None
 
 
-def get_recent_agents(api_key: str | None, limit: int = 20) -> dict:
+def get_recent_agents(api_key: Optional[str], limit: int = 20) -> dict:
     """Get recently registered agents from the Almanac."""
     url = f"{BASE_URL}/v1/almanac/recent"
     try:
@@ -168,7 +169,7 @@ def get_recent_agents(api_key: str | None, limit: int = 20) -> dict:
         return {"status": "error", "error": f"Request failed: {str(e)}"}
 
 
-def inspect_agent(agent_address: str, api_key: str | None, full: bool = False) -> dict:
+def inspect_agent(agent_address: str, api_key: Optional[str], full: bool = False) -> dict:
     """Gather all available information about an agent."""
     log(f"Inspecting agent: {agent_address}")
 

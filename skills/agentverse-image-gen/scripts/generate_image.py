@@ -39,6 +39,7 @@ import json
 import os
 import sys
 import time
+from typing import Optional
 
 try:
     import requests
@@ -53,8 +54,10 @@ except ImportError:
 BASE_URL = "https://agentverse.ai/v1/hosting/agents"
 SEARCH_URL = "https://agentverse.ai/v1/search/agents"
 
-# Known working image generation agents
-DEFAULT_IMAGE_AGENT = "agent1qdynamic8lgnax37n20296xr4kcfllahlnse7gy5mrkdt4q9v9h06qkmclkl"  # nano-banana
+# Known working image generation agents.
+# Use the official Fetch.ai DALL-E 3 agent (verified active in Almanac).
+# If this agent becomes unavailable, run `--search` to discover active alternatives.
+DEFAULT_IMAGE_AGENT = "agent1q0utywlfr3dfrfkwk4fjmtdrfew0zh692untdlr877d6ay8ykwpewydmxtl"  # Fetch.ai DALL-E 3
 RELAY_AGENT_NAME = "agentverse-skills-relay"
 
 
@@ -129,7 +132,7 @@ def search_image_agents(api_key: str) -> list:
     return agents
 
 
-def find_relay_agent(api_key: str) -> str | None:
+def find_relay_agent(api_key: str) -> Optional[str]:
     """Find an existing relay agent."""
     try:
         r = requests.get(BASE_URL, headers=headers(api_key), timeout=30)
@@ -148,7 +151,7 @@ def find_relay_agent(api_key: str) -> str | None:
     return None
 
 
-def create_relay_agent(api_key: str) -> str | None:
+def create_relay_agent(api_key: str) -> Optional[str]:
     """Create a new relay agent."""
     try:
         r = requests.post(
@@ -208,7 +211,7 @@ agent.include(protocol, publish_manifest=True)
 '''
 
 
-def generate_image(api_key: str, prompt: str, target: str, wait: int, relay: str | None) -> dict:
+def generate_image(api_key: str, prompt: str, target: str, wait: int, relay: Optional[str]) -> dict:
     """Execute the image generation workflow."""
     # Find or create relay
     if relay:
@@ -364,7 +367,7 @@ def main():
     parser.add_argument(
         "--agent", "-a",
         default=DEFAULT_IMAGE_AGENT,
-        help=f"Target image generation agent address (default: nano-banana {DEFAULT_IMAGE_AGENT[:20]}...)",
+        help=f"Target image generation agent address (default: Fetch.ai DALL-E 3 {DEFAULT_IMAGE_AGENT[:20]}...)",
     )
     parser.add_argument(
         "--wait", "-w", type=int, default=60,

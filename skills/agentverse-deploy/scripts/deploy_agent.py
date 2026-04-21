@@ -39,6 +39,7 @@ import json
 import os
 import sys
 import time
+from typing import Tuple
 
 try:
     import requests
@@ -96,7 +97,15 @@ def create_agent(api_key: str, name: str) -> dict:
         elif r.status_code == 400:
             error_text = r.text
             if "limit" in error_text.lower() or "maximum" in error_text.lower():
-                return {"success": False, "error": f"Agent limit reached (max 8 per account). Delete unused agents first."}
+                # Don't hardcode the limit — report what the API says and let the user act on it.
+                # Use `manage_agents.py list` to see current agents and delete unused ones.
+                return {
+                    "success": False,
+                    "error": (
+                        f"Agent limit reached: {error_text[:200]}. "
+                        "Delete unused agents with `manage_agents.py delete --agent <address>`."
+                    ),
+                }
             return {"success": False, "error": f"Bad request: {error_text[:200]}"}
         elif r.status_code == 409:
             return {"success": False, "error": f"Agent with name '{name}' already exists."}
@@ -161,7 +170,7 @@ def detect_language(filename: str) -> str:
     return language_map.get(ext, "python")
 
 
-def read_file(filepath: str) -> tuple[str, str]:
+def read_file(filepath: str) -> Tuple[str, str]:
     """Read a file and return (filename, content)."""
     if not os.path.exists(filepath):
         print(
