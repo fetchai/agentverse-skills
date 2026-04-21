@@ -3,14 +3,14 @@ name: asi1-chat
 description: >
   Query the ASI:One LLM — the AI model by the ASI Alliance (Fetch.ai +
   SingularityNET + Ocean Protocol). OpenAI-compatible API. Supports
-  asi1 and asi1-mini models. Requires ASI_ONE_API_KEY env var.
+  asi1 (default) and asi1-mini models. Requires ASI_ONE_API_KEY env var.
   Use when asked to "use ASI", "query ASI:One", or "use the Fetch.ai LLM".
 license: Apache-2.0
 compatibility: Python 3.8+, network access, ASI_ONE_API_KEY env var
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   author: "Fetch.ai"
-  last-updated: "2026-04-20"
+  last-updated: "2026-04-21"
 allowed-tools: Read Bash(python3 *) Bash(curl *) Bash(pip install requests)
 ---
 
@@ -18,7 +18,7 @@ allowed-tools: Read Bash(python3 *) Bash(curl *) Bash(pip install requests)
 
 ## Overview
 
-Query the ASI:One large language model — built by the Artificial Superintelligence (ASI) Alliance. OpenAI-compatible API with `asi1` (full) and `asi1-mini` (fast) models.
+Query the ASI:One large language model — built by the Artificial Superintelligence (ASI) Alliance. OpenAI-compatible API with `asi1` (default, recommended) and `asi1-mini` (faster, lighter) models.
 
 ## When to Use
 
@@ -45,7 +45,7 @@ python3 scripts/asi1_chat.py --prompt "Explain the ASI Alliance in 3 sentences"
 python3 scripts/asi1_chat.py \
   --prompt "What are the benefits of decentralized AI?" \
   --system "You are a blockchain and AI expert. Be concise." \
-  --model asi1-mini
+  --model asi1
 ```
 
 ### 3. Streaming mode
@@ -57,7 +57,7 @@ python3 scripts/asi1_chat.py --prompt "Write a haiku about AI agents" --stream
 ```json
 {
   "status": "success",
-  "model": "asi1-mini",
+  "model": "asi1",
   "response": "The ASI Alliance is a collaboration between Fetch.ai, SingularityNET, and Ocean Protocol...",
   "usage": {
     "prompt_tokens": 12,
@@ -71,7 +71,7 @@ python3 scripts/asi1_chat.py --prompt "Write a haiku about AI agents" --stream
 
 - **Base URL**: `https://api.asi1.ai/v1`
 - **Endpoint**: `/chat/completions`
-- **Models**: `asi1` (powerful), `asi1-mini` (fast, cheaper)
+- **Models**: `asi1` (default, recommended), `asi1-mini` (faster, lighter)
 - **Format**: OpenAI-compatible (same request/response format)
 - **Auth**: `Authorization: Bearer {ASI_ONE_API_KEY}`
 
@@ -86,7 +86,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="asi1-mini",
+    model="asi1",
     messages=[{"role": "user", "content": "Hello!"}]
 )
 print(response.choices[0].message.content)
@@ -95,7 +95,7 @@ print(response.choices[0].message.content)
 ## Edge Cases
 
 - **Rate limits**: If 429 error, wait and retry
-- **Timeout**: Large prompts may take 30s+ — use `asi1-mini` for speed
+- **Timeout**: Large prompts may take 30–60s — increase `--max-tokens` or use `--stream` for real-time output. Use `asi1-mini` if you need lower latency.
 - **Streaming**: Use `--stream` for real-time output on long responses
 - **Token limits**: Context window varies by model — keep prompts reasonable
 

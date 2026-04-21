@@ -22,7 +22,7 @@ Supports both standard and streaming responses.
 
 Usage:
     python3 asi1_chat.py --prompt "What is Fetch.ai?"
-    python3 asi1_chat.py --prompt "Explain AI agents" --model asi1-mini
+    python3 asi1_chat.py --prompt "Explain AI agents"
     python3 asi1_chat.py --prompt "Write code" --system "You are a Python expert"
     python3 asi1_chat.py --prompt "Hello" --stream
     python3 asi1_chat.py --prompt "Complex question" --max-tokens 2000
@@ -52,7 +52,7 @@ except ImportError:
 
 
 API_URL = "https://api.asi1.ai/v1/chat/completions"
-DEFAULT_MODEL = "asi1-mini"
+DEFAULT_MODEL = "asi1"
 
 
 def log(msg: str) -> None:

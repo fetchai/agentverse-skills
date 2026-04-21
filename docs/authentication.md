@@ -64,7 +64,7 @@ In HTTP requests:
 ```bash
 curl -H "Authorization: Bearer $ASI_ONE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"asi1-mini","messages":[{"role":"user","content":"Hello"}]}' \
+  -d '{"model":"asi1","messages":[{"role":"user","content":"Hello"}]}' \
   https://api.asi1.ai/v1/chat/completions
 ```
 

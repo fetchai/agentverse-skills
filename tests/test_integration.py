@@ -135,10 +135,10 @@ class TestASI1Chat(unittest.TestCase):
             raise unittest.SkipTest("ASI_ONE_API_KEY not set — skipping ASI:One tests")
 
     def test_basic_prompt_returns_text(self):
-        """A simple prompt to ASI:One mini should return a text response."""
+        """A simple prompt to ASI:One should return a text response."""
         result = run_skill(
             self.SCRIPT,
-            ["--prompt", "Reply with exactly: INTEGRATION_TEST_OK", "--model", "asi1-mini"],
+            ["--prompt", "Reply with exactly: INTEGRATION_TEST_OK"],
             timeout=30,
         )
         self.assertEqual(result.get("status"), "success", msg=f"ASI:One chat failed: {result}")

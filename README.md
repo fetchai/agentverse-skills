@@ -24,7 +24,7 @@ Give your AI coding agent (Claude Code, Codex, Copilot, Cursor, Gemini CLI) the 
 | [`agentverse-manage`](skills/agentverse-manage/) | List, start, stop, restart, and inspect your hosted agents | `manage_agents.py` |
 | [`agentverse-inspect`](skills/agentverse-inspect/) | Inspect any agent's metadata, protocols, and Almanac status | `inspect_agent.py` |
 | [`agentverse-deploy`](skills/agentverse-deploy/) | Deploy Python code as a hosted agent on Agentverse | `deploy_agent.py` |
-| [`asi1-chat`](skills/asi1-chat/) | Query the ASI:One LLM (`asi1-mini` / `asi1`) via API | `asi1_chat.py` |
+| [`asi1-chat`](skills/asi1-chat/) | Query the ASI:One LLM (`asi1` / `asi1-mini`) via API | `asi1_chat.py` |
 
 ---
 
@@ -64,7 +64,7 @@ python3 skills/agentverse-image-gen/scripts/generate_image.py \
 
 # Query ASI:One
 python3 skills/asi1-chat/scripts/asi1_chat.py \
-  --prompt "What is the Fetch.ai ecosystem?" --model asi1-mini
+  --prompt "What is the Fetch.ai ecosystem?"
 ```
 
 All scripts output JSON to stdout. Errors go to stderr. Exit code 0 on success, 1 on failure.
