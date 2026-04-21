@@ -167,6 +167,166 @@ class TestInspectAgent(unittest.TestCase):
         self.assertEqual(result.get("status"), "success", msg=f"Recent agents failed: {result}")
 
 
+class TestDeployAgent(unittest.TestCase):
+    """Tests for agentverse-deploy skill.
+
+    These tests create and then clean up agents. They require enough headroom
+    in the account's hosted-agent limit (8 by default).
+    """
+
+    DEPLOY_SCRIPT = os.path.join(SKILLS_ROOT, "agentverse-deploy", "scripts", "deploy_agent.py")
+    MANAGE_SCRIPT = os.path.join(SKILLS_ROOT, "agentverse-manage", "scripts", "manage_agents.py")
+    _deployed_address = None
+
+    def test_deploy_inline_code(self):
+        """Deploy a minimal agent from inline code, verify it exists, then delete it."""
+        agent_code = (
+            '@agent.on_event("startup")\n'
+            'async def hi(ctx):\n'
+            '    ctx.logger.info("integration-test-ok")\n'
+        )
+        result = run_skill(
+            self.DEPLOY_SCRIPT,
+            ["--name", "integration-test-deploy", "--code", agent_code],
+            timeout=30,
+        )
+        # May fail due to agent limit — treat as skip, not failure
+        if result.get("status") == "error" and "limit" in result.get("error", "").lower():
+            self.skipTest(f"Agent limit reached: {result['error']}")
+
+        self.assertEqual(result.get("status"), "success", msg=f"Deploy failed: {result}")
+        address = result.get("address", "")
+        self.assertTrue(address.startswith("agent1"), "Deployed agent address malformed")
+        self.__class__._deployed_address = address
+
+        # Verify agent appears in list
+        list_result = run_skill(self.MANAGE_SCRIPT, ["list"])
+        if list_result.get("status") == "success":
+            addresses = [a.get("address") for a in list_result.get("agents", [])]
+            self.assertIn(address, addresses, "Deployed agent not found in list")
+
+    def tearDown(self):
+        """Clean up any deployed test agents."""
+        if self.__class__._deployed_address:
+            run_skill(
+                self.MANAGE_SCRIPT,
+                ["delete", "--agent", self.__class__._deployed_address],
+                timeout=15,
+            )
+            self.__class__._deployed_address = None
+
+
+class TestChatAgent(unittest.TestCase):
+    """Tests for agentverse-chat skill.
+
+    These tests require a working relay agent and available computation quota.
+    They are marked as slow tests since they involve deploying code and
+    waiting for responses.
+    """
+
+    SCRIPT = os.path.join(SKILLS_ROOT, "agentverse-chat", "scripts", "agentverse_chat.py")
+    # Weather Agent — verified active, responds quickly
+    WEATHER_AGENT = "agent1qfvydlgcxrvga2kqjxhj3hpngegtysm2c7uk48ywdue0kgvtc2f5cwhyffv"
+
+    def test_chat_returns_structured_output(self):
+        """Chat should return structured JSON even on timeout."""
+        result = run_skill(
+            self.SCRIPT,
+            [
+                "--target", self.WEATHER_AGENT,
+                "--message", "Hello, what can you do?",
+                "--wait", "30",
+                "--cleanup",
+            ],
+            timeout=60,
+        )
+        # Accept either success or timeout — both are valid structured responses
+        self.assertIn(
+            result.get("status"), ("success", "timeout"),
+            msg=f"Unexpected status: {result}",
+        )
+        # Should always include target in output
+        self.assertEqual(
+            result.get("target"), self.WEATHER_AGENT,
+            "Output should echo back the target address",
+        )
+        # On success, should have responses list
+        if result["status"] == "success":
+            self.assertIsInstance(result.get("responses"), list)
+            self.assertGreater(len(result["responses"]), 0)
+
+    def test_chat_timeout_includes_debug_info(self):
+        """Timeout response should include log entries for debugging."""
+        # Use a very short wait to guarantee timeout
+        result = run_skill(
+            self.SCRIPT,
+            [
+                "--target", self.WEATHER_AGENT,
+                "--message", "Quick test",
+                "--wait", "5",
+                "--cleanup",
+            ],
+            timeout=30,
+        )
+        if result.get("status") == "timeout":
+            self.assertIn("log_entries", result, "Timeout should include log_entries")
+            self.assertIn("last_status", result, "Timeout should include last_status")
+        # If it actually succeeded in 5s, that's fine too — just pass
+
+
+class TestImageGenAgent(unittest.TestCase):
+    """Tests for agentverse-image-gen skill."""
+
+    SCRIPT = os.path.join(SKILLS_ROOT, "agentverse-image-gen", "scripts", "generate_image.py")
+
+    def test_search_image_agents(self):
+        """--search should return a list of image generation agents."""
+        result = run_skill(self.SCRIPT, ["--search"], timeout=30)
+        self.assertEqual(result.get("status"), "success", msg=f"Search failed: {result}")
+        agents = result.get("agents", [])
+        self.assertGreater(len(agents), 0, "Expected at least one image gen agent")
+        # Should include recommended agent
+        self.assertIn("recommended", result, "Should include recommended agent address")
+
+    def test_image_gen_returns_structured_output(self):
+        """Image generation should return structured JSON."""
+        result = run_skill(
+            self.SCRIPT,
+            [
+                "--prompt", "A simple red circle on white background",
+                "--wait", "45",
+                "--cleanup",
+            ],
+            timeout=90,
+        )
+        # Accept success, timeout, or error — all should be structured
+        self.assertIn(
+            result.get("status"), ("success", "timeout", "error"),
+            msg=f"Unexpected status: {result}",
+        )
+        # On success, should have image_url
+        if result["status"] == "success":
+            self.assertTrue(
+                result.get("image_url", ""),
+                "Success response should include image_url",
+            )
+
+
+class TestManageCleanup(unittest.TestCase):
+    """Tests for the cleanup subcommand in manage_agents."""
+
+    SCRIPT = os.path.join(SKILLS_ROOT, "agentverse-manage", "scripts", "manage_agents.py")
+
+    def test_cleanup_returns_structured_output(self):
+        """Cleanup should return structured JSON even with nothing to clean."""
+        result = run_skill(self.SCRIPT, ["cleanup"], timeout=30)
+        self.assertIn(
+            result.get("status"), ("success", "partial"),
+            msg=f"Cleanup returned unexpected status: {result}",
+        )
+        self.assertIn("deleted", result, "Cleanup should include 'deleted' list")
+
+
 if __name__ == "__main__":
     # Run with verbose output by default when executed directly
     loader = unittest.TestLoader()
