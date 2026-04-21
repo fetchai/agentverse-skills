@@ -66,13 +66,17 @@ python3 scripts/manage_agents.py delete --agent agent1q...
 ```json
 {
   "status": "success",
-  "count": 3,
+  "total": 3,
   "agents": [
     {
       "name": "my-image-relay",
       "address": "agent1q...",
       "running": true,
-      "compiled": true
+      "compiled": true,
+      "domain": "",
+      "wallet_address": "fetch1...",
+      "created": "2026-04-20T10:00:00Z",
+      "updated": "2026-04-20T15:30:00Z"
     }
   ]
 }
@@ -83,10 +87,12 @@ python3 scripts/manage_agents.py delete --agent agent1q...
 {
   "status": "success",
   "agent": "agent1q...",
+  "total_entries": 15,
+  "showing": 3,
   "logs": [
-    {"timestamp": "2026-04-20T15:30:00Z", "level": "info", "message": "Agent started"},
-    {"timestamp": "2026-04-20T15:30:01Z", "level": "info", "message": "Sending message..."},
-    {"timestamp": "2026-04-20T15:30:35Z", "level": "info", "message": "RESULT:{...}"}
+    {"timestamp": "2026-04-20T15:30:00Z", "message": "Agent started", "level": "info"},
+    {"timestamp": "2026-04-20T15:30:01Z", "message": "Sending message...", "level": "info"},
+    {"timestamp": "2026-04-20T15:30:35Z", "message": "RESULT:{...}", "level": "info"}
   ]
 }
 ```

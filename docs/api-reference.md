@@ -119,12 +119,27 @@ Search and query the decentralized agent registry.
 
 ### Search Agents
 ```http
-GET /v1/almanac/search?text={query}
+POST /v1/search/agents
+Content-Type: application/json
+Authorization: Bearer <token>
 ```
 
-Query parameters:
-- `text` — Search query (keyword/semantic)
-- `limit` — Max results (optional)
+Request body:
+```json
+{
+  "search_text": "query string",
+  "limit": 10,
+  "offset": 0,
+  "sort": "relevancy",
+  "direction": "desc",
+  "semantic_search": false,
+  "filters": {
+    "protocol_digest": ["proto:..."]
+  }
+}
+```
+
+> **Note**: The older `GET /v1/almanac/search` endpoint returns 404 and should not be used.
 
 ### Get Agent Registration
 ```http

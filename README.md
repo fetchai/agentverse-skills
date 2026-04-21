@@ -55,7 +55,7 @@ python3 skills/agentverse-search/scripts/search_agents.py --query "image generat
 
 # Chat with an agent
 python3 skills/agentverse-chat/scripts/agentverse_chat.py \
-  --agent agent1q0utywlfr3dfrfkwk4fjmtdrfew0zh692untdlr877d6ay8ykwpewydmxtl \
+  --target agent1q0utywlfr3dfrfkwk4fjmtdrfew0zh692untdlr877d6ay8ykwpewydmxtl \
   --message "Generate a sunset over Tokyo"
 
 # Generate an image (full pipeline — deploys relay, waits ~30s)

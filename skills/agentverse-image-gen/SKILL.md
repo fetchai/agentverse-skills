@@ -55,9 +55,12 @@ python3 scripts/generate_image.py \
 {
   "status": "success",
   "prompt": "A dragon made of circuit boards...",
-  "image_url": "https://res.cloudinary.com/fetch-ai/image/upload/v1776700090/nano-banana-agent/0932ec14-...",
-  "agent_used": "agent1qdynamic8lgnax37n20296xr4kcfllahlnse7gy5mrkdt4q9v9h06qkmclkl",
-  "elapsed_seconds": 32.5
+  "image_url": "https://res.cloudinary.com/fetch-ai/image/upload/v1776700090/dalle3-agent/0932ec14-...",
+  "metadata": {},
+  "target_agent": "agent1q0utywlfr3dfrfkwk4fjmtdrfew0zh692untdlr877d6ay8ykwpewydmxtl",
+  "relay_agent": "agent1q...",
+  "wait_time_seconds": 35,
+  "all_responses": [{"type": "text", "text": "Generating..."}, "..."]
 }
 ```
 
@@ -72,12 +75,12 @@ python3 scripts/generate_image.py \
 
 ## Default Agent
 
-If you don't specify `--agent`, the script uses the well-known **Nano Banana** image agent:
+If you don't specify `--agent`, the script uses the well-known **Fetch.ai DALL-E 3** image agent:
 ```
-agent1qdynamic8lgnax37n20296xr4kcfllahlnse7gy5mrkdt4q9v9h06qkmclkl
+agent1q0utywlfr3dfrfkwk4fjmtdrfew0zh692untdlr877d6ay8ykwpewydmxtl
 ```
 
-This agent generates 2048×2048 images and returns them as Cloudinary URLs.
+This agent generates images using DALL-E 3 and returns them as Cloudinary URLs.
 
 ## Timing
 

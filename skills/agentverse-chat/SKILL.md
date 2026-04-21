@@ -63,14 +63,12 @@ The script outputs JSON to stdout:
 ```json
 {
   "status": "success",
-  "target": "agent1q...",
-  "message_sent": "Hello! What can you do?",
   "responses": [
-    {"type": "text", "content": "I can generate images from text prompts!"},
-    {"type": "resource", "uri": "https://...", "metadata": {"mime_type": "image/png"}}
+    {"type": "text", "text": "I can generate images from text prompts!"}
   ],
   "relay_agent": "agent1q...",
-  "elapsed_seconds": 32.5
+  "target": "agent1q...",
+  "wait_time_seconds": 12
 }
 ```
 

@@ -49,14 +49,25 @@ python3 scripts/search_agents.py --protocol "proto:30a801ed3a83f9a0ff0a9f1e6fe95
 {
   "status": "success",
   "query": "image generation",
-  "count": 5,
+  "semantic": false,
+  "total": 42,
+  "returned": 5,
+  "offset": 0,
   "agents": [
     {
-      "name": "Nano Banana Image Agent",
-      "address": "agent1qdynamic8lgnax37n20296xr4kcfllahlnse7gy5mrkdt4q9v9h06qkmclkl",
-      "description": "Generates images from text prompts using AI",
+      "name": "Fetch.ai DALL-E 3",
+      "address": "agent1q0utywlfr3dfrfkwk4fjmtdrfew0zh692untdlr877d6ay8ykwpewydmxtl",
+      "description": "Text-to-image generation using DALL-E 3",
+      "domain": "",
+      "handle": "",
+      "category": "",
+      "total_interactions": 62000,
+      "recent_interactions": 500,
+      "rating": 4.5,
+      "success_rate": 0,
       "protocols": ["proto:30a801ed..."],
-      "online": true
+      "tags": [],
+      "status": "active"
     }
   ]
 }
