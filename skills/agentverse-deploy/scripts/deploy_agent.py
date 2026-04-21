@@ -317,8 +317,18 @@ def main():
         # Ensure agent.py is the first/primary file
         agent_py_files = [f for f in code_files if f["name"] == "agent.py"]
         if not agent_py_files and len(code_files) == 1:
-            # If single file uploaded, rename to agent.py
+            # Single file uploaded — rename to agent.py with a warning
+            original_name = code_files[0]["name"]
             code_files[0]["name"] = "agent.py"
+            log(f"Note: Renamed '{original_name}' \u2192 'agent.py' (Agentverse requires agent.py as entrypoint)")
+        elif not agent_py_files and len(code_files) > 1:
+            print(json.dumps({
+                "status": "error",
+                "error": "No agent.py found in multi-file deployment",
+                "hint": "Agentverse requires 'agent.py' as the entrypoint. Rename your main file to 'agent.py'.",
+                "files_provided": [f["name"] for f in code_files],
+            }))
+            sys.exit(1)
 
     result = deploy(
         name=args.name,
