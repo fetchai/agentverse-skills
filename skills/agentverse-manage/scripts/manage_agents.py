@@ -17,7 +17,7 @@
 """
 manage_agents.py — Manage hosted Agentverse agents.
 
-List, start, stop, view logs, and delete hosted agents.
+List, start, stop, view logs, delete, and clean up hosted agents.
 
 Usage:
     python3 manage_agents.py list
@@ -27,6 +27,8 @@ Usage:
     python3 manage_agents.py delete --agent agent1q...
     python3 manage_agents.py code --agent agent1q...
     python3 manage_agents.py info --agent agent1q...
+    python3 manage_agents.py cleanup             # Remove all relay agents
+    python3 manage_agents.py cleanup --keep 1    # Keep 1 most recent relay
 
 Requirements:
     - requests library (pip install requests)
@@ -67,6 +69,11 @@ def validate_agent_address(address: str, flag_name: str = "--agent") -> None:
             "hint": "Expected format: agent1q... (65 characters). Use agentverse-search to find addresses.",
         }))
         sys.exit(1)
+
+
+# Relay agents created by agentverse-chat and agentverse-image-gen use this
+# naming convention.  The cleanup command targets agents matching this prefix.
+RELAY_AGENT_PREFIX = "agentverse-skills-relay"
 
 
 def log(msg: str) -> None:
@@ -383,6 +390,86 @@ def cmd_info(api_key: str, agent_address: str) -> dict:
         return {"status": "error", "error": f"Request failed: {str(e)}"}
 
 
+def cmd_cleanup(api_key: str, keep: int = 0) -> dict:
+    """Delete relay agents created by agentverse-chat / agentverse-image-gen.
+
+    Targets hosted agents whose name starts with ``RELAY_AGENT_PREFIX``.
+    Keeps the *keep* most recently updated relays (0 = delete all).
+
+    Args:
+        api_key: Agentverse API key.
+        keep: Number of relay agents to keep (sorted by last update, newest first).
+
+    Returns:
+        Result dict with status, deleted/remaining counts and addresses.
+    """
+    try:
+        r = requests.get(BASE_URL, headers=headers(api_key), timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        agents_raw = data.get("items", data) if isinstance(data, dict) else data
+    except requests.exceptions.HTTPError as e:
+        return {"status": "error", "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"}
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "error": f"Request failed: {str(e)}"}
+
+    # Filter for relay agents
+    relays = [
+        a for a in agents_raw
+        if (a.get("name") or "").startswith(RELAY_AGENT_PREFIX)
+    ]
+
+    if not relays:
+        return {
+            "status": "success",
+            "action": "cleanup",
+            "message": "No relay agents found",
+            "deleted_count": 0,
+            "deleted_addresses": [],
+            "remaining_count": 0,
+        }
+
+    # Sort by update timestamp (newest first) so we keep the freshest
+    relays.sort(key=lambda a: a.get("code_update_timestamp", ""), reverse=True)
+
+    to_keep = relays[:keep] if keep > 0 else []
+    to_delete = relays[keep:] if keep > 0 else relays
+
+    deleted = []
+    failed = []
+    for agent in to_delete:
+        addr = agent.get("address", "")
+        name = agent.get("name", "")
+        # Stop first (fire-and-forget)
+        try:
+            requests.post(f"{BASE_URL}/{addr}/stop", headers=headers(api_key), timeout=30)
+        except Exception:
+            pass
+        # Delete
+        try:
+            dr = requests.delete(f"{BASE_URL}/{addr}", headers=headers(api_key), timeout=30)
+            if dr.status_code in (200, 201, 204):
+                log(f"Deleted relay: {name} ({addr[:30]}...)")
+                deleted.append(addr)
+            else:
+                log(f"Failed to delete {name}: HTTP {dr.status_code}")
+                failed.append(addr)
+        except requests.exceptions.RequestException as e:
+            log(f"Failed to delete {name}: {e}")
+            failed.append(addr)
+
+    result = {
+        "status": "success",
+        "action": "cleanup",
+        "deleted_count": len(deleted),
+        "deleted_addresses": deleted,
+        "remaining_count": len(to_keep) + len(failed),
+    }
+    if failed:
+        result["failed_addresses"] = failed
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Manage hosted Agentverse agents.",
@@ -396,12 +483,13 @@ def main():
             "  delete   Delete a hosted agent\n"
             "  code     View agent source code\n"
             "  info     Get detailed agent info\n"
+            "  cleanup  Remove relay agents created by agentverse-chat/image-gen\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "command",
-        choices=["list", "start", "stop", "restart", "logs", "delete", "code", "info"],
+        choices=["list", "start", "stop", "restart", "logs", "delete", "code", "info", "cleanup"],
         help="Action to perform",
     )
     parser.add_argument(
@@ -419,6 +507,10 @@ def main():
     parser.add_argument(
         "--delay", type=int, default=3,
         help="Seconds to wait between stop and start for 'restart' command (default: 3)",
+    )
+    parser.add_argument(
+        "--keep", type=int, default=0,
+        help="Number of relay agents to keep for 'cleanup' command (default: 0 = delete all)",
     )
     parser.add_argument(
         "--verbose", action="store_true",
@@ -458,6 +550,8 @@ def main():
         result = cmd_code(api_key, args.agent)
     elif args.command == "info":
         result = cmd_info(api_key, args.agent)
+    elif args.command == "cleanup":
+        result = cmd_cleanup(api_key, keep=args.keep)
     else:
         result = {"status": "error", "error": f"Unknown command: {args.command}"}
 

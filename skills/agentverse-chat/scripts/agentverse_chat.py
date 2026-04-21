@@ -24,6 +24,7 @@ Usage:
     python3 agentverse_chat.py --target agent1q... --message "Hello"
     python3 agentverse_chat.py --target agent1q... --message "Hello" --wait 60
     python3 agentverse_chat.py --target agent1q... --message "Hello" --relay agent1q...
+    python3 agentverse_chat.py --target agent1q... --message "Hello" --cleanup
 
 Requirements:
     - requests library (pip install requests)
@@ -41,18 +42,25 @@ import sys
 import time
 from typing import Optional
 
-try:
-    import requests
-except ImportError:
-    print(
-        json.dumps({"status": "error", "error": "requests library not installed. Run: pip install requests"}),
-        file=sys.stdout,
-    )
-    sys.exit(1)
-
-
-BASE_URL = "https://agentverse.ai/v1/hosting/agents"
-RELAY_AGENT_NAME = "agentverse-skills-relay"
+# ---------------------------------------------------------------------------
+# Import shared relay utilities
+# ---------------------------------------------------------------------------
+_COMMON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "_common")
+sys.path.insert(0, _COMMON_DIR)
+from agentverse_relay import (  # noqa: E402
+    BASE_URL,
+    delete_agent,
+    extract_results,
+    extract_status,
+    find_or_create_relay,
+    get_api_key,
+    get_logs,
+    headers,
+    set_logger,
+    start_agent,
+    stop_agent,
+    upload_code,
+)
 
 _AGENT_ADDR_RE = re.compile(r"^agent1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{59}$")
 
@@ -71,102 +79,6 @@ def validate_agent_address(address: str, flag_name: str = "--target") -> None:
 def log(msg: str) -> None:
     """Print log message to stderr (keeps stdout clean for JSON output)."""
     print(f"[agentverse-chat] {msg}", file=sys.stderr)
-
-
-def get_api_key() -> str:
-    """Get Agentverse API key from environment."""
-    key = os.environ.get("AGENTVERSE_API_KEY", "").strip()
-    if not key:
-        print(
-            json.dumps({
-                "status": "error",
-                "error": "AGENTVERSE_API_KEY environment variable not set. "
-                         "Get your key at https://agentverse.ai/profile/api-keys"
-            }),
-            file=sys.stdout,
-        )
-        sys.exit(1)
-    return key
-
-
-def headers(api_key: str) -> dict:
-    """Standard headers for Agentverse API."""
-    return {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-
-def find_relay_agent(api_key: str) -> Optional[str]:
-    """Find an existing relay agent by name."""
-    try:
-        r = requests.get(BASE_URL, headers=headers(api_key), timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        agents = data.get("items", data) if isinstance(data, dict) else data
-        for agent in agents:
-            if agent.get("name") == RELAY_AGENT_NAME:
-                return agent.get("address")
-    except Exception as e:
-        log(f"Warning: error listing agents: {e}")
-    return None
-
-
-def create_relay_agent(api_key: str) -> Optional[str]:
-    """Create a new relay agent for chat relay."""
-    try:
-        r = requests.post(
-            BASE_URL,
-            headers=headers(api_key),
-            json={"name": RELAY_AGENT_NAME},
-            timeout=30,
-        )
-        if r.status_code in (200, 201):
-            data = r.json()
-            address = data.get("address")
-            log(f"Created relay agent: {address}")
-            return address
-        else:
-            log(f"Warning: could not create relay agent: {r.status_code} {r.text[:200]}")
-    except Exception as e:
-        log(f"Warning: error creating relay agent: {e}")
-    return None
-
-
-def find_or_create_relay(api_key: str) -> str:
-    """Find an existing relay agent or create one."""
-    address = find_relay_agent(api_key)
-    if address:
-        log(f"Using existing relay agent: {address}")
-        return address
-
-    address = create_relay_agent(api_key)
-    if address:
-        return address
-
-    # Fallback: try to use any stopped agent
-    try:
-        r = requests.get(BASE_URL, headers=headers(api_key), timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        agents = data.get("items", data) if isinstance(data, dict) else data
-        for agent in agents:
-            if not agent.get("running"):
-                addr = agent.get("address")
-                log(f"Fallback: using existing stopped agent: {addr}")
-                return addr
-    except Exception:
-        pass
-
-    print(
-        json.dumps({
-            "status": "error",
-            "error": "Could not find or create a relay agent. "
-                     "Specify --relay with an existing agent address, or delete unused agents."
-        }),
-        file=sys.stdout,
-    )
-    sys.exit(1)
 
 
 def build_chat_code(target_address: str, message: str, start_session: bool = False) -> str:
@@ -247,123 +159,13 @@ agent.include(protocol, publish_manifest=True)
 '''
 
 
-def upload_code(api_key: str, agent_address: str, code: str) -> bool:
-    """Upload code to a hosted agent."""
-    files = [{"language": "python", "name": "agent.py", "value": code}]
-    payload = {"code": json.dumps(files)}
-    try:
-        r = requests.put(
-            f"{BASE_URL}/{agent_address}/code",
-            headers=headers(api_key),
-            json=payload,
-            timeout=30,
-        )
-        if r.status_code in (200, 201, 204):
-            return True
-        log(f"Code upload failed: {r.status_code} {r.text[:200]}")
-        return False
-    except Exception as e:
-        log(f"Code upload error: {e}")
-        return False
-
-
-def stop_agent(api_key: str, agent_address: str) -> None:
-    """Stop a hosted agent."""
-    try:
-        requests.post(
-            f"{BASE_URL}/{agent_address}/stop",
-            headers=headers(api_key),
-            timeout=30,
-        )
-    except Exception:
-        pass
-
-
-def start_agent(api_key: str, agent_address: str) -> bool:
-    """Start a hosted agent."""
-    try:
-        r = requests.post(
-            f"{BASE_URL}/{agent_address}/start",
-            headers=headers(api_key),
-            timeout=30,
-        )
-        return r.status_code in (200, 201)
-    except Exception as e:
-        log(f"Start error: {e}")
-        return False
-
-
-def get_logs(api_key: str, agent_address: str) -> list:
-    """Get latest logs from a hosted agent."""
-    try:
-        r = requests.get(
-            f"{BASE_URL}/{agent_address}/logs/latest",
-            headers=headers(api_key),
-            timeout=30,
-        )
-        if r.status_code == 200:
-            return r.json() if isinstance(r.json(), list) else []
-    except Exception as e:
-        log(f"Logs error: {e}")
-    return []
-
-
-def extract_results(logs: list) -> list:
-    """Extract RESULT: entries from agent logs.
-
-    Parses each RESULT: entry using a multi-stage strategy that handles:
-    - Valid JSON (direct json.loads)
-    - Python repr format (ast.literal_eval — correctly handles apostrophes)
-    - Raw strings as fallback (never silently drops content)
-    """
-    import ast
-
-    results = []
-    # Sort by timestamp to get chronological order
-    sorted_logs = sorted(logs, key=lambda x: x.get("log_timestamp", ""))
-    for entry in sorted_logs:
-        msg = entry.get("log_entry", "")
-        if msg.startswith("RESULT:"):
-            result_str = msg[7:]
-            parsed = None
-
-            # Stage 1: try direct JSON parsing (handles proper JSON)
-            try:
-                parsed = json.loads(result_str)
-            except (json.JSONDecodeError, ValueError):
-                pass
-
-            # Stage 2: try ast.literal_eval (handles Python repr with apostrophes,
-            # single-quoted strings, None/True/False)
-            if parsed is None:
-                try:
-                    parsed = ast.literal_eval(result_str)
-                except (ValueError, SyntaxError):
-                    pass
-
-            # Stage 3: fall back to raw string — never silently drop content
-            results.append(parsed if parsed is not None else result_str)
-
-    return results
-
-
-def extract_status(logs: list) -> str:
-    """Extract the latest CHAT_STATUS from logs."""
-    status = "unknown"
-    sorted_logs = sorted(logs, key=lambda x: x.get("log_timestamp", ""))
-    for entry in sorted_logs:
-        msg = entry.get("log_entry", "")
-        if msg.startswith("CHAT_STATUS:"):
-            status = msg[12:]
-    return status
-
-
 def run_chat(
     target: str,
     message: str,
     wait: int,
     relay: Optional[str],
     start_session: bool = False,
+    cleanup: bool = False,
 ) -> dict:
     """Execute the full chat workflow.
 
@@ -375,83 +177,95 @@ def run_chat(
         start_session: If True, send StartSessionContent before the ChatMessage.
             Use this for agents that require explicit session initiation.
             See agentverse-chat/SKILL.md for guidance on which agents need this.
+        cleanup: If True, delete the relay agent after use (when auto-created).
     """
     api_key = get_api_key()
 
     # Step 1: Find or create relay agent
+    auto_created = False
     if relay:
         agent_address = relay
         log(f"Using specified relay agent: {agent_address}")
     else:
         agent_address = find_or_create_relay(api_key)
+        auto_created = True  # May have been found or created; safe to cleanup
 
-    # Step 2: Stop any running instance
-    log("Stopping relay agent (if running)...")
-    stop_agent(api_key, agent_address)
-    time.sleep(2)
+    try:
+        # Step 2: Stop any running instance
+        log("Stopping relay agent (if running)...")
+        stop_agent(api_key, agent_address)
+        time.sleep(2)
 
-    # Step 3: Build and upload code
-    log(f"Building chat code for target: {target}" + (" (with session start)" if start_session else ""))
-    code = build_chat_code(target, message, start_session=start_session)
+        # Step 3: Build and upload code
+        log(f"Building chat code for target: {target}" + (" (with session start)" if start_session else ""))
+        code = build_chat_code(target, message, start_session=start_session)
 
-    log("Uploading code...")
-    if not upload_code(api_key, agent_address, code):
-        return {"status": "error", "error": "Failed to upload code to relay agent"}
+        log("Uploading code...")
+        if not upload_code(api_key, agent_address, code):
+            return {"status": "error", "error": "Failed to upload code to relay agent"}
 
-    time.sleep(1)
+        time.sleep(1)
 
-    # Step 4: Start agent
-    log("Starting relay agent...")
-    if not start_agent(api_key, agent_address):
-        return {"status": "error", "error": "Failed to start relay agent"}
+        # Step 4: Start agent
+        log("Starting relay agent...")
+        if not start_agent(api_key, agent_address):
+            return {"status": "error", "error": "Failed to start relay agent"}
 
-    # Step 5: Wait for response
-    log(f"Waiting {wait}s for response...")
-    elapsed = 0
-    poll_interval = 5
-    results = []
+        # Step 5: Wait for response
+        log(f"Waiting {wait}s for response...")
+        elapsed = 0
+        poll_interval = 5
+        results = []
 
-    while elapsed < wait:
-        time.sleep(poll_interval)
-        elapsed += poll_interval
+        while elapsed < wait:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
 
-        # Check logs for results
-        logs = get_logs(api_key, agent_address)
-        results = extract_results(logs)
-        status = extract_status(logs)
+            # Check logs for results
+            logs = get_logs(api_key, agent_address)
+            results = extract_results(logs)
+            status = extract_status(logs)
 
+            if results:
+                log(f"Got {len(results)} response(s) after {elapsed}s")
+                break
+
+            if elapsed % 15 == 0:
+                log(f"  ...waiting ({elapsed}/{wait}s, status: {status})")
+
+        # Step 6: Stop agent
+        log("Stopping relay agent...")
+        stop_agent(api_key, agent_address)
+
+        # Step 7: Return results
         if results:
-            log(f"Got {len(results)} response(s) after {elapsed}s")
-            break
-
-        if elapsed % 15 == 0:
-            log(f"  ...waiting ({elapsed}/{wait}s, status: {status})")
-
-    # Step 6: Stop agent
-    log("Stopping relay agent...")
-    stop_agent(api_key, agent_address)
-
-    # Step 7: Return results
-    if results:
-        return {
-            "status": "success",
-            "responses": results,
-            "relay_agent": agent_address,
-            "target": target,
-            "wait_time_seconds": elapsed,
-        }
-    else:
-        # Get final logs for debugging
-        final_logs = get_logs(api_key, agent_address)
-        log_entries = [e.get("log_entry", "") for e in sorted(final_logs, key=lambda x: x.get("log_timestamp", ""))]
-        return {
-            "status": "timeout",
-            "error": f"No response received within {wait}s",
-            "relay_agent": agent_address,
-            "target": target,
-            "last_status": extract_status(final_logs),
-            "log_entries": log_entries[-10:],  # Last 10 log entries for debugging
-        }
+            return {
+                "status": "success",
+                "responses": results,
+                "relay_agent": agent_address,
+                "target": target,
+                "wait_time_seconds": elapsed,
+            }
+        else:
+            # Get final logs for debugging
+            final_logs = get_logs(api_key, agent_address)
+            log_entries = [e.get("log_entry", "") for e in sorted(final_logs, key=lambda x: x.get("log_timestamp", ""))]
+            return {
+                "status": "timeout",
+                "error": f"No response received within {wait}s",
+                "relay_agent": agent_address,
+                "target": target,
+                "last_status": extract_status(final_logs),
+                "log_entries": log_entries[-10:],  # Last 10 log entries for debugging
+            }
+    finally:
+        # Cleanup: delete the relay agent if --cleanup was requested and we auto-managed it
+        if cleanup and auto_created:
+            log("Cleaning up relay agent...")
+            if delete_agent(api_key, agent_address):
+                log(f"Relay agent deleted: {agent_address}")
+            else:
+                log(f"Warning: failed to delete relay agent: {agent_address}")
 
 
 def main():
@@ -485,6 +299,10 @@ def main():
         ),
     )
     parser.add_argument(
+        "--cleanup", action="store_true",
+        help="Delete the relay agent after use (prevents accumulation of relay agents)",
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Enable verbose logging to stderr",
     )
@@ -496,6 +314,9 @@ def main():
         global log
         log = lambda msg: None  # noqa: E731
 
+    # Wire the shared module's logger to our log function
+    set_logger(log)
+
     validate_agent_address(args.target, "--target")
 
     result = run_chat(
@@ -504,6 +325,7 @@ def main():
         wait=args.wait,
         relay=args.relay,
         start_session=args.start_session,
+        cleanup=args.cleanup,
     )
 
     print(json.dumps(result, indent=2))
