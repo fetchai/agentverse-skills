@@ -187,7 +187,7 @@ AGENTS.md                     # Technical guide for AI agents working on this re
 
 ## 🌐 About Agentverse
 
-[Agentverse](https://agentverse.ai) is Fetch.ai's platform for deploying and discovering AI agents. It's part of the [ASI Alliance](https://asi.ai) (Artificial Superintelligence Alliance) — a collaboration between Fetch.ai, SingularityNET, and Ocean Protocol.
+[Agentverse](https://agentverse.ai) is Fetch.ai's platform for deploying and discovering AI agents. It's part of the [ASI Alliance](https://asi.ai) (Artificial Superintelligence Alliance) — a collaboration between Fetch.ai and SingularityNET.
 
 Key concepts:
 - **Hosted Agents** — Python agents running on Agentverse infrastructure
