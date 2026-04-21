@@ -28,3 +28,6 @@ Thumbs.db
 # Node (for package.json)
 node_modules/
 package-lock.json
+
+# Logs
+*.log
