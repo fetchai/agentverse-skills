@@ -32,6 +32,11 @@ jobs:
       - name: Check SKILL.md files exist
         run: |
           for skill_dir in skills/*/; do
+            # Skip internal/shared directories (prefixed with _)
+            dirname=$(basename "${skill_dir%/}")
+            if [[ "$dirname" == _* ]]; then
+              continue
+            fi
             if [ ! -f "${skill_dir}SKILL.md" ]; then
               echo "✗ Missing SKILL.md in ${skill_dir}"
               exit 1
