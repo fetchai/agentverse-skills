@@ -1,0 +1,90 @@
+name: Integration Tests
+
+# Run integration tests against live Agentverse and ASI:One APIs.
+# These tests require API keys configured as repository secrets.
+# They are non-blocking (continue-on-error: true) to avoid failing PRs
+# due to transient API issues.
+
+on:
+  push:
+    branches: [main]
+  # Run on PRs when explicitly requested (not automatic to save API calls)
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why are you running integration tests?"
+        required: false
+        default: "Manual trigger"
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    # Only run when API key is available (skip on forks without secrets)
+    if: vars.AGENTVERSE_INTEGRATION_TESTS_ENABLED == 'true' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests pytest
+
+      - name: Run integration tests
+        env:
+          AGENTVERSE_API_KEY: ${{ secrets.AGENTVERSE_API_KEY }}
+          ASI_ONE_API_KEY: ${{ secrets.ASI_ONE_API_KEY }}
+        # Non-blocking: transient API failures should not block merges
+        continue-on-error: true
+        run: |
+          echo "=== Running Agentverse Skills Integration Tests ==="
+          python3 tests/test_integration.py
+
+      - name: Smoke-test: search returns results
+        env:
+          AGENTVERSE_API_KEY: ${{ secrets.AGENTVERSE_API_KEY }}
+        continue-on-error: true
+        run: |
+          echo "--- Smoke test: search ---"
+          result=$(python3 skills/agentverse-search/scripts/search_agents.py \
+            --query "image generation" --limit 3)
+          echo "$result" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          assert data.get('status') == 'success', f'Search failed: {data}'
+          assert len(data.get('agents', [])) > 0, 'Search returned 0 agents'
+          print(f'✓ Search returned {data[\"total\"]} agents')
+          "
+
+      - name: Smoke-test: list agents works
+        env:
+          AGENTVERSE_API_KEY: ${{ secrets.AGENTVERSE_API_KEY }}
+        continue-on-error: true
+        run: |
+          echo "--- Smoke test: list agents ---"
+          result=$(python3 skills/agentverse-manage/scripts/manage_agents.py list)
+          echo "$result" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          assert data.get('status') == 'success', f'List failed: {data}'
+          print(f'✓ Listed {data[\"total\"]} hosted agents')
+          "
+
+      - name: Smoke-test: ASI:One returns a response
+        env:
+          ASI_ONE_API_KEY: ${{ secrets.ASI_ONE_API_KEY }}
+        continue-on-error: true
+        run: |
+          echo "--- Smoke test: ASI:One ---"
+          result=$(python3 skills/asi1-chat/scripts/asi1_chat.py \
+            --prompt "Reply with: OK" --model asi1-mini)
+          echo "$result" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          assert data.get('status') == 'success', f'ASI:One failed: {data}'
+          assert len(data.get('content', '')) > 0, 'ASI:One returned empty content'
+          print(f'✓ ASI:One responded: {data[\"content\"][:80]}...')
+          "

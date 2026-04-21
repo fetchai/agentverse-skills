@@ -148,24 +148,62 @@ def find_or_create_relay(api_key: str) -> str:
         json.dumps({
             "status": "error",
             "error": "Could not find or create a relay agent. "
-                     "You may have reached the hosted agent limit (8). "
-                     "Specify --relay with an existing agent address."
+                     "Specify --relay with an existing agent address, or delete unused agents."
         }),
         file=sys.stdout,
     )
     sys.exit(1)
 
 
-def build_chat_code(target_address: str, message: str) -> str:
-    """Build the hosted agent code that sends a chat message and captures response."""
+def build_chat_code(target_address: str, message: str, start_session: bool = False) -> str:
+    """Build the hosted agent code that sends a chat message and captures response.
+
+    Args:
+        target_address: The agent address to send the message to.
+        message: The text message to send.
+        start_session: If True, send a StartSessionContent message first before the
+            ChatMessage. Some agents (particularly stateful or multi-turn agents)
+            require this handshake before they will respond to messages.
+    """
     # Escape the message for embedding in Python source
     escaped_message = message.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
-    return f'''from datetime import datetime
+    # Build the startup handler body depending on whether session init is needed
+    if start_session:
+        startup_body = f'''    ctx.logger.info("CHAT_STATUS:sending_session_start")
+    await ctx.send(TARGET, ChatMessage(
+        timestamp=datetime.now(),
+        msg_id=uuid4(),
+        content=[StartSessionContent(type="start-session")],
+    ))
+    ctx.logger.info("CHAT_STATUS:session_start_sent")
+    # Small delay to let the target process the session start before the main message
+    await asyncio.sleep(2)
+    ctx.logger.info("CHAT_STATUS:sending")
+    await ctx.send(TARGET, ChatMessage(
+        timestamp=datetime.now(),
+        msg_id=uuid4(),
+        content=[TextContent(type="text", text=MESSAGE)],
+    ))
+    ctx.logger.info("CHAT_STATUS:sent")'''
+        extra_imports = "import asyncio\n"
+        start_session_import = "StartSessionContent, "
+    else:
+        startup_body = f'''    ctx.logger.info("CHAT_STATUS:sending")
+    await ctx.send(TARGET, ChatMessage(
+        timestamp=datetime.now(),
+        msg_id=uuid4(),
+        content=[TextContent(type="text", text=MESSAGE)],
+    ))
+    ctx.logger.info("CHAT_STATUS:sent")'''
+        extra_imports = ""
+        start_session_import = ""
+
+    return f'''{extra_imports}from datetime import datetime
 from uuid import uuid4
 from uagents import Context, Protocol
 from uagents_core.contrib.protocols.chat import (
-    ChatMessage, ChatAcknowledgement, TextContent, chat_protocol_spec
+    ChatMessage, ChatAcknowledgement, {start_session_import}TextContent, chat_protocol_spec
 )
 
 TARGET = "{target_address}"
@@ -175,13 +213,7 @@ protocol = Protocol(spec=chat_protocol_spec)
 
 @agent.on_event("startup")
 async def send_msg(ctx: Context):
-    ctx.logger.info("CHAT_STATUS:sending")
-    await ctx.send(TARGET, ChatMessage(
-        timestamp=datetime.now(),
-        msg_id=uuid4(),
-        content=[TextContent(type="text", text=MESSAGE)],
-    ))
-    ctx.logger.info("CHAT_STATUS:sent")
+{startup_body}
 
 @protocol.on_message(ChatAcknowledgement)
 async def handle_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
@@ -312,8 +344,24 @@ def extract_status(logs: list) -> str:
     return status
 
 
-def run_chat(target: str, message: str, wait: int, relay: Optional[str]) -> dict:
-    """Execute the full chat workflow."""
+def run_chat(
+    target: str,
+    message: str,
+    wait: int,
+    relay: Optional[str],
+    start_session: bool = False,
+) -> dict:
+    """Execute the full chat workflow.
+
+    Args:
+        target: Target agent address.
+        message: Text message to send.
+        wait: Max seconds to wait for a response.
+        relay: Optional relay agent address (auto-detected if None).
+        start_session: If True, send StartSessionContent before the ChatMessage.
+            Use this for agents that require explicit session initiation.
+            See agentverse-chat/SKILL.md for guidance on which agents need this.
+    """
     api_key = get_api_key()
 
     # Step 1: Find or create relay agent
@@ -329,8 +377,8 @@ def run_chat(target: str, message: str, wait: int, relay: Optional[str]) -> dict
     time.sleep(2)
 
     # Step 3: Build and upload code
-    log(f"Building chat code for target: {target}")
-    code = build_chat_code(target, message)
+    log(f"Building chat code for target: {target}" + (" (with session start)" if start_session else ""))
+    code = build_chat_code(target, message, start_session=start_session)
 
     log("Uploading code...")
     if not upload_code(api_key, agent_address, code):
@@ -414,6 +462,15 @@ def main():
         help="Specific relay agent address to use (optional, auto-detected if omitted)",
     )
     parser.add_argument(
+        "--start-session", action="store_true", dest="start_session",
+        help=(
+            "Send a StartSessionContent message before the main ChatMessage. "
+            "Required by some stateful or multi-turn agents that expect an explicit "
+            "session handshake before responding. Most agents do NOT need this — "
+            "only use if you're getting no response from an agent that normally works."
+        ),
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Enable verbose logging to stderr",
     )
@@ -430,6 +487,7 @@ def main():
         message=args.message,
         wait=args.wait,
         relay=args.relay,
+        start_session=args.start_session,
     )
 
     print(json.dumps(result, indent=2))

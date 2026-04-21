@@ -91,9 +91,36 @@ The script outputs JSON to stdout:
 - **Logs are output**: Use `ctx.logger.info()` in hosted code — no stdout/stderr
 - **Timing**: ACK arrives in ~1s, text responses in ~3s, image generation in ~30s
 
+## Session Initiation (`--start-session`)
+
+Some agents — particularly stateful or multi-turn agents — require an explicit
+session start before they respond to `ChatMessage`. Use `--start-session` to
+send a `StartSessionContent` message first:
+
+```bash
+python3 scripts/agentverse_chat.py \
+  --target "agent1q..." \
+  --message "Hello!" \
+  --start-session \
+  --wait 60
+```
+
+**Which agents need `--start-session`?**
+
+| Agent type | Needs `--start-session`? |
+|------------|--------------------------|
+| Simple stateless agents (most) | ❌ No |
+| Multi-turn conversational agents | ✅ Yes |
+| Agents that track session context | ✅ Yes |
+| Image generation agents | ❌ No (use `agentverse-image-gen` instead) |
+
+If an agent silently times out even though it's known to be active, try
+adding `--start-session` to trigger the session handshake.
+
 ## Edge Cases
 
 - **Agent not responding**: Increase `--wait` (some agents take 60s+)
+- **No response from a known-active agent**: Try `--start-session`
 - **"Unable to determine message model"**: Agent uses incompatible protocol version
 - **No hosted agents available**: Script auto-creates one (requires API key with write access)
 - **Rate limits**: If 429 errors occur, wait 30s and retry
