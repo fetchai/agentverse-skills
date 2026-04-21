@@ -15,15 +15,18 @@ Output:
 {
   "status": "success",
   "prompt": "A dragon made of circuit boards standing on a Tokyo rooftop at sunset, detailed digital art",
-  "image_url": "https://res.cloudinary.com/fetch-ai/image/upload/v1776700090/nano-banana-agent/0932ec14-dragon.png",
-  "agent_used": "agent1qdynamic8lgnax37n20296xr4kcfllahlnse7gy5mrkdt4q9v9h06qkmclkl",
-  "elapsed_seconds": 31.8
+  "image_url": "https://res.cloudinary.com/fetch-ai/image/upload/v1776700090/dalle3-agent/0932ec14-dragon.png",
+  "metadata": {},
+  "target_agent": "agent1q0utywlfr3dfrfkwk4fjmtdrfew0zh692untdlr877d6ay8ykwpewydmxtl",
+  "relay_agent": "agent1q...",
+  "wait_time_seconds": 35,
+  "all_responses": ["..."]
 }
 ```
 
 ## What This Does Automatically
 
-1. Uses the default Nano Banana image agent (or discovers one via search)
+1. Uses the default Fetch.ai DALL-E 3 image agent (or discovers one via search)
 2. Finds/creates a relay agent in your account
 3. Sends the prompt as a ChatMessage
 4. Waits for the ResourceContent response
