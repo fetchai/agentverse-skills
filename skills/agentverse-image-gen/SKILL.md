@@ -9,9 +9,9 @@ description: >
 license: Apache-2.0
 compatibility: Python 3.8+, network access, AGENTVERSE_API_KEY env var
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   author: "Fetch.ai"
-  last-updated: "2026-04-20"
+  last-updated: "2026-05-04"
 allowed-tools: Read Bash(python3 *) Bash(curl *) Bash(pip install requests)
 ---
 
@@ -51,6 +51,8 @@ python3 scripts/generate_image.py \
 ```
 
 ### 3. Parse the result
+
+When the image comes back as a CDN URL (e.g. Cloudinary), `image_url` is already browser-openable:
 ```json
 {
   "status": "success",
@@ -63,6 +65,23 @@ python3 scripts/generate_image.py \
   "all_responses": [{"type": "text", "text": "Generating..."}, "..."]
 }
 ```
+
+When the image comes back as an `agent-storage://` URI, the response also includes `public_url` — a direct HTTPS URL you can open in a browser or download:
+```json
+{
+  "status": "success",
+  "prompt": "A sunset over Tokyo",
+  "image_url": "agent-storage://https://agentverse.ai/v1/storage/47cecfda-8d6f-4c21-80ab-10c4d8d052bb",
+  "public_url": "https://agentverse.ai/v1/storage/47cecfda-8d6f-4c21-80ab-10c4d8d052bb",
+  "metadata": {"mime_type": "image/png", "role": "generated-image"},
+  "target_agent": "agent1q0utywlfr3dfrfkwk4fjmtdrfew0zh692untdlr877d6ay8ykwpewydmxtl",
+  "relay_agent": "agent1q...",
+  "wait_time_seconds": 45,
+  "all_responses": [...]
+}
+```
+
+> Use `public_url` (when present) to open or display the image. Fall back to `image_url` for CDN-hosted images.
 
 ## How It Works
 

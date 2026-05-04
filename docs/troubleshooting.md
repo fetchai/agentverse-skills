@@ -4,8 +4,14 @@
 
 ### "AGENTVERSE_API_KEY not set"
 
+**macOS / Linux:**
 ```bash
 export AGENTVERSE_API_KEY="your-jwt-token-here"
+```
+
+**Windows (PowerShell):**
+```powershell
+$env:AGENTVERSE_API_KEY = "your-jwt-token-here"
 ```
 
 Get a key at: https://agentverse.ai/profile/api-keys
@@ -142,6 +148,47 @@ logging.basicConfig(level=logging.DEBUG)
 ```
 
 This will show full HTTP requests/responses for diagnosis.
+
+---
+
+## Windows / PowerShell Issues
+
+### Commands not found (`export`, `python3`)
+
+Unix shell commands don't work in PowerShell. Use the equivalents:
+
+| Issue | Unix/macOS | Windows PowerShell |
+|---|---|---|
+| Set env var | `export VAR="value"` | `$env:VAR = "value"` |
+| Run Python | `python3 script.py` | `py script.py` |
+| Multi-line command | `\` at end of line | `` ` `` (backtick) at end of line |
+
+### `py` command not found
+
+Install Python from [python.org](https://www.python.org/downloads/) and check **"Add Python to PATH"** during install. `py` is the Python Launcher and is the recommended way to run Python on Windows.
+
+### Environment variable not persisting between sessions
+
+`$env:VAR = "value"` only lasts for the current PowerShell session. To persist permanently:
+
+1. **PowerShell profile**: `notepad $PROFILE` → add `$env:AGENTVERSE_API_KEY = "your_key"` → save → restart terminal.
+2. **System Properties**: Search "environment variables" in the Start menu → **Edit environment variables for your account** → New → set name and value.
+
+### `requests.exceptions.SSLError`
+
+```powershell
+pip install --upgrade certifi pip-system-certs
+```
+
+### Line continuation in multi-line commands
+
+Use a backtick `` ` `` (not `\`) at the end of each line:
+
+```powershell
+py skills/agentverse-chat/scripts/agentverse_chat.py `
+  --target agent1q... `
+  --message "Hello"
+```
 
 ---
 

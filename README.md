@@ -32,12 +32,19 @@ Give your AI coding agent (Claude Code, Codex, Copilot, Cursor, Gemini CLI) the 
 
 ### 1. Get your API key
 
-Sign up at [agentverse.ai](https://agentverse.ai) and create a key at **Profile → API Keys**:
+Sign up at [agentverse.ai](https://agentverse.ai) and create a key at **Profile → API Keys**.
 
+**macOS / Linux**
 ```bash
 export AGENTVERSE_API_KEY="your_key_here"
-# Get yours at: https://agentverse.ai/profile/api-keys
 ```
+
+**Windows (PowerShell)**
+```powershell
+$env:AGENTVERSE_API_KEY = "your_key_here"
+```
+
+> 💡 **Windows users:** See [Windows / PowerShell](#-windows--powershell) below for the full setup guide.
 
 ### 2. Clone this repo
 
@@ -49,6 +56,7 @@ pip install requests   # only dependency
 
 ### 3. Run a skill
 
+**macOS / Linux**
 ```bash
 # Search for agents
 python3 skills/agentverse-search/scripts/search_agents.py --query "image generation" --limit 5
@@ -64,6 +72,25 @@ python3 skills/agentverse-image-gen/scripts/generate_image.py \
 
 # Query ASI:One
 python3 skills/asi1-chat/scripts/asi1_chat.py \
+  --prompt "What is the Fetch.ai ecosystem?"
+```
+
+**Windows (PowerShell)**
+```powershell
+# Search for agents
+py skills/agentverse-search/scripts/search_agents.py --query "image generation" --limit 5
+
+# Chat with an agent
+py skills/agentverse-chat/scripts/agentverse_chat.py `
+  --target agent1q0utywlfr3dfrfkwk4fjmtdrfew0zh692untdlr877d6ay8ykwpewydmxtl `
+  --message "Generate a sunset over Tokyo"
+
+# Generate an image
+py skills/agentverse-image-gen/scripts/generate_image.py `
+  --prompt "dragon made of circuit boards on a Tokyo rooftop"
+
+# Query ASI:One
+py skills/asi1-chat/scripts/asi1_chat.py `
   --prompt "What is the Fetch.ai ecosystem?"
 ```
 
@@ -149,6 +176,53 @@ allowed-tools: Read Bash(python3 *) Bash(pip install requests)
 ```
 
 The `allowed-tools` field tells AI coding agents which tools they're permitted to use when running this skill. The body of `SKILL.md` documents arguments, outputs, and examples.
+
+---
+
+## 🪟 Windows / PowerShell
+
+All skills work on Windows. Replace `python3` with `py` (or `python`) and `export` with `$env:`.
+
+### Setting environment variables
+
+```powershell
+# Required
+$env:AGENTVERSE_API_KEY = "your_key_here"
+
+# Optional (for asi1-chat)
+$env:ASI_ONE_API_KEY = "sk_..."
+```
+
+> To persist across sessions, add these to your PowerShell profile (`notepad $PROFILE`) or set them as User environment variables in **System Properties → Environment Variables**.
+
+### Running scripts
+
+Use `py` (Python Launcher, ships with Python for Windows) or `python`:
+
+```powershell
+# Using py (recommended on Windows)
+py skills/agentverse-search/scripts/search_agents.py --query "weather" --limit 5
+
+# Long commands: use backtick ` for line continuation (not backslash \)
+py skills/agentverse-chat/scripts/agentverse_chat.py `
+  --target agent1q... `
+  --message "Hello"
+```
+
+### Command cheat sheet
+
+| Unix/macOS | Windows PowerShell |
+|---|---|
+| `export VAR="value"` | `$env:VAR = "value"` |
+| `python3 script.py` | `py script.py` |
+| `\` (line continuation) | `` ` `` (backtick) |
+| `pip3 install requests` | `pip install requests` |
+
+### Troubleshooting on Windows
+
+- **`py` not found?** Install Python from [python.org](https://www.python.org/downloads/) and ensure "Add Python to PATH" is checked during install.
+- **`$env:VAR` not persisting?** Set the variable as a permanent User environment variable in **System Properties → Advanced → Environment Variables**.
+- **SSL errors?** Run `pip install --upgrade certifi pip-system-certs`.
 
 ---
 

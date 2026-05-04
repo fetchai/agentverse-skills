@@ -57,6 +57,7 @@ from agentverse_relay import (  # noqa: E402
     get_logs,
     headers,
     parse_result_entry,
+    resolve_public_url,
     set_logger,
     start_agent,
     stop_agent,
@@ -406,7 +407,7 @@ def generate_image(
 
         # Build output
         if image_url:
-            return {
+            result = {
                 "status": "success",
                 "prompt": prompt,
                 "image_url": image_url,
@@ -416,6 +417,11 @@ def generate_image(
                 "wait_time_seconds": elapsed,
                 "all_responses": all_results,
             }
+            # Resolve agent-storage:// URIs to a direct browser-openable HTTPS URL
+            public_url = resolve_public_url(image_url)
+            if public_url and public_url != image_url:
+                result["public_url"] = public_url
+            return result
 
         if terminal_error:
             return {

@@ -8,6 +8,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+
+- **`public_url` field in image responses** ([#31](https://github.com/fetchai/agentverse-skills/issues/31)): When an image agent returns an `agent-storage://` URI, `generate_image.py` now also includes `public_url` — a direct HTTPS URL that can be opened in a browser or downloaded with `requests.get()`. `agentverse_chat.py` similarly enriches resource responses with `public_url` when present.
+- **Windows / PowerShell documentation** ([#31](https://github.com/fetchai/agentverse-skills/issues/31)): Added full Windows setup guide to `README.md` (new [Windows / PowerShell](#-windows--powershell) section), PowerShell equivalents to `docs/authentication.md`, and a dedicated Windows troubleshooting section to `docs/troubleshooting.md`. Covers `$env:VAR` syntax, `py` launcher, backtick line continuation, and persistent env var setup.
+
 ### Changed
 
 - **`asi1-chat`**: Default model changed from `asi1-mini` to `asi1` — aligns with Fetch.ai Innovation Labs docs and community usage. `asi1-mini` remains available via `--model asi1-mini` for lower-latency use cases.
