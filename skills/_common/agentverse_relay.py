@@ -441,3 +441,78 @@ def extract_status(logs: list, prefix: str = "CHAT_STATUS:") -> str:
         if msg.startswith(prefix):
             status = msg[len(prefix):]
     return status
+
+
+# ---------------------------------------------------------------------------
+# Public URL resolution (agent-storage:// → HTTPS)
+# ---------------------------------------------------------------------------
+
+def resolve_public_url(uri: str) -> Optional[str]:
+    """Convert an ``agent-storage://`` URI to a direct HTTPS URL.
+
+    Agentverse image agents return images as ``agent-storage://`` URIs::
+
+        agent-storage://https://agentverse.ai/v1/storage/<uuid>
+
+    The ``agent-storage://`` prefix is a protocol hint for the Agentverse
+    web UI; the remainder is a valid HTTPS URL that can be opened directly
+    in a browser or downloaded with ``requests.get(url)``.
+
+    Args:
+        uri: The URI string to resolve.
+
+    Returns:
+        A direct HTTPS URL string, or ``None`` if the URI cannot be
+        resolved to a public HTTP(S) URL.
+    """
+    if not uri:
+        return None
+    if uri.startswith("agent-storage://"):
+        # Strip the scheme prefix — the remainder is always a valid HTTPS URL
+        return uri[len("agent-storage://"):]
+    if uri.startswith("http://") or uri.startswith("https://"):
+        return uri
+    return None
+
+
+def enrich_with_public_url(results: list) -> list:
+    """Post-process a results list to add ``public_url`` to resource entries.
+
+    For each result that is a ResourceContent dict (``type == "resource"``),
+    resolves the ``uri`` field to a direct HTTPS URL and adds it as
+    ``public_url`` at the top level of the entry.  This lets callers open
+    or display images without needing to understand the ``agent-storage://``
+    scheme.
+
+    Example input entry::
+
+        {"type": "resource", "resource": {
+            "uri": "agent-storage://https://agentverse.ai/v1/storage/abc-123",
+            "metadata": {"mime_type": "image/png", "role": "generated-image"}
+        }}
+
+    Example output entry::
+
+        {"type": "resource", "resource": {...},
+         "public_url": "https://agentverse.ai/v1/storage/abc-123"}
+
+    Args:
+        results: List of parsed RESULT entries (from ``extract_results``).
+
+    Returns:
+        New list with ``public_url`` fields added where applicable.
+        Non-resource entries and entries with non-resolvable URIs are passed
+        through unchanged.
+    """
+    enriched = []
+    for item in results:
+        if isinstance(item, dict) and item.get("type") == "resource":
+            resource = item.get("resource", {})
+            if isinstance(resource, dict):
+                uri = resource.get("uri", "")
+                public_url = resolve_public_url(uri)
+                if public_url:
+                    item = dict(item)  # shallow copy — don't mutate original
+                    item["public_url"] = public_url
+        enriched.append(item)
+    return enriched

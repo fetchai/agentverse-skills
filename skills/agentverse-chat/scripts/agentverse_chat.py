@@ -50,6 +50,7 @@ sys.path.insert(0, _COMMON_DIR)
 from agentverse_relay import (  # noqa: E402
     BASE_URL,
     delete_agent,
+    enrich_with_public_url,
     extract_results,
     extract_status,
     find_or_create_relay,
@@ -239,6 +240,9 @@ def run_chat(
 
         # Step 7: Return results
         if results:
+            # Enrich resource responses with direct browser-openable public_url
+            # (converts agent-storage:// URIs to HTTPS URLs)
+            results = enrich_with_public_url(results)
             return {
                 "status": "success",
                 "responses": results,

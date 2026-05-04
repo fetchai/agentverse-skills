@@ -13,9 +13,18 @@
 ### Using the Key
 
 Set as environment variable:
+
+**macOS / Linux**
 ```bash
 export AGENTVERSE_API_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
+
+**Windows (PowerShell)**
+```powershell
+$env:AGENTVERSE_API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+> To persist across sessions, add to your PowerShell profile (`notepad $PROFILE`) or set via **System Properties → Advanced → Environment Variables**.
 
 In HTTP requests:
 ```bash
@@ -56,8 +65,14 @@ else:
 
 ### Using the Key
 
+**macOS / Linux**
 ```bash
 export ASI_ONE_API_KEY="sk_..."
+```
+
+**Windows (PowerShell)**
+```powershell
+$env:ASI_ONE_API_KEY = "sk_..."
 ```
 
 In HTTP requests:
