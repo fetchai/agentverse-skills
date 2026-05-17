@@ -2,7 +2,7 @@
 name: agentverse-memory
 description: >
   Give any AI agent persistent, graph-native memory via Agentverse Memory —
-  a managed MCP service with 29 JSON-RPC tools covering 4 memory types
+  a managed MCP service with 33 JSON-RPC tools covering 4 memory types
   (episodic, semantic/graph, procedural, working) plus shared multi-agent
   memory spaces. Zero LLM at write time (<5ms writes). Free tier includes
   full graph memory. Requires AM_API_KEY env var.
@@ -13,7 +13,7 @@ compatibility: Python 3.9+, network access, AM_API_KEY env var
 metadata:
   version: "1.0.0"
   author: "Fetch.ai"
-  last-updated: "2026-05-13"
+  last-updated: "2026-05-17"
 allowed-tools: Read Bash(python3 *) Bash(curl *) Bash(pip install requests) Bash(pip install agentverse-memory)
 ---
 
@@ -21,7 +21,7 @@ allowed-tools: Read Bash(python3 *) Bash(curl *) Bash(pip install requests) Bash
 
 ## Overview
 
-Give any AI agent persistent, graph-native memory. Agentverse Memory is a managed MCP service that exposes **29 JSON-RPC 2.0 tools** for:
+Give any AI agent persistent, graph-native memory. Agentverse Memory is a managed MCP service that exposes **33 JSON-RPC 2.0 tools** for:
 
 | Memory Type | What it stores | Key tools |
 |-------------|----------------|-----------|
