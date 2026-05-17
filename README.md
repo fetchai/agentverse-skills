@@ -18,6 +18,7 @@ Give your AI coding agent (Claude Code, Codex, Copilot, Cursor, Gemini CLI) the 
 
 | Skill | What it does | Key script |
 |-------|-------------|-----------|
+| [`agentverse-memory`](skills/agentverse-memory/) | Persistent graph-native memory for AI agents — 29 MCP tools (episodic, semantic, procedural, working, shared spaces) | `memory_client.py` |
 | [`agentverse-search`](skills/agentverse-search/) | Search Agentverse by keyword, tags, or protocol filter | `search_agents.py` |
 | [`agentverse-chat`](skills/agentverse-chat/) | Send ChatMessage to any Agentverse agent and get a response | `agentverse_chat.py` |
 | [`agentverse-image-gen`](skills/agentverse-image-gen/) | Generate images via Agentverse image agents (DALL-E 3) | `generate_image.py` |
