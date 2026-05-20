@@ -2,7 +2,7 @@
 name: agentverse-memory
 description: >
   Give any AI agent persistent, graph-native memory via Agentverse Memory —
-  a managed MCP service with 33 JSON-RPC tools covering 4 memory types
+  a managed MCP service with 35 JSON-RPC tools covering 4 memory types
   (episodic, semantic/graph, procedural, working) plus shared multi-agent
   memory spaces. Zero LLM at write time (<5ms writes). Free tier includes
   full graph memory. Requires AM_API_KEY env var.
@@ -13,7 +13,7 @@ compatibility: Python 3.9+, network access, AM_API_KEY env var
 metadata:
   version: "1.0.0"
   author: "Fetch.ai"
-  last-updated: "2026-05-17"
+  last-updated: "2026-05-20"
 allowed-tools: Read Bash(python3 *) Bash(curl *) Bash(pip install requests) Bash(pip install agentverse-memory)
 ---
 
@@ -21,16 +21,17 @@ allowed-tools: Read Bash(python3 *) Bash(curl *) Bash(pip install requests) Bash
 
 ## Overview
 
-Give any AI agent persistent, graph-native memory. Agentverse Memory is a managed MCP service that exposes **33 JSON-RPC 2.0 tools** for:
+Give any AI agent persistent, graph-native memory. Agentverse Memory is a managed MCP service that exposes **35 JSON-RPC 2.0 tools** for:
 
 | Memory Type | What it stores | Key tools |
 |-------------|----------------|-----------|
-| **Episodic** | Time-stamped events, observations, conversations | `memory_store_episode`, `memory_query_episodes` |
-| **Semantic** | Knowledge graph triples (subject, predicate, object) | `memory_store_fact`, `memory_query_facts` |
-| **Graph** | Graph traversal, shortest path (A*) | `memory_traverse_graph`, `memory_find_path` |
-| **Procedural** | Goal-directed skill sequences with outcome tracking | `memory_store_procedure`, `memory_execute_procedure_lookup` |
+| **Episodic** | Time-stamped events, observations, conversations | `memory_store_episode`, `memory_search_episodes` |
+| **Entity** | Named entities with typed properties | `memory_store_entity`, `memory_get_entity` |
+| **Graph** | Knowledge graph triples, traversal, pathfinding | `memory_traverse_graph`, `memory_find_path` |
+| **Procedural** | Goal-directed skill sequences with outcome tracking | `memory_store_procedure`, `memory_match_procedure` |
 | **Working** | Ephemeral key-value scratchpad (TTL-aware) | `memory_set_working`, `memory_get_working` |
-| **Shared** | Multi-agent shared knowledge spaces | `memory_create_space`, `memory_query_space` |
+| **Shared** | Multi-agent shared knowledge spaces | `memory_create_shared_space`, `memory_shared_query` |
+| **Pheromone** | Stigmergic trails on memory paths | `memory_deposit_pheromone`, `memory_get_pheromone` |
 
 **Key differentiators:**
 - 🚀 **<5ms writes** — zero LLM at write time (TF-IDF only)
@@ -201,39 +202,49 @@ stats = client.stats(agent_id="my-agent")
 print(f"Episodes: {stats['counts']['episodes']}, Facts: {stats['counts']['facts']}")
 ```
 
-## All 29 MCP Tools
+## All 35 MCP Tools
 
-### Episodic Memory (8 tools)
+### Episodic Memory (5 tools)
 | Tool | Description |
 |------|-------------|
 | `memory_store_episode` | Store a time-stamped event or observation |
-| `memory_query_episodes` | Natural language search (BM25 + HNSW + pheromone) |
-| `memory_get_episode` | Retrieve episode by ID |
-| `memory_list_episodes` | Paginated list, sorted by recency or pheromone weight |
-| `memory_update_episode` | Update content, metadata, or validity window |
-| `memory_delete_episode` | Permanently delete (prefer `invalid_at` for audit trail) |
+| `memory_get_episodes` | Retrieve episodes by agent, with pagination |
+| `memory_search_episodes` | Natural language search (BM25 + HNSW + pheromone reranking) |
 | `memory_search_timeline` | Search within a specific time window |
 | `memory_consolidate_episodes` | Merge related episodes into a summary |
 
-### Semantic / Graph Memory (7 tools)
+### Entity Memory (5 tools)
 | Tool | Description |
 |------|-------------|
-| `memory_store_fact` | Store (subject, predicate, object) triple with temporal validity |
-| `memory_query_facts` | Natural language fact search with temporal filter |
-| `memory_get_fact` | Retrieve fact by ID |
-| `memory_update_fact` | Update fact (creates new version, invalidates old) |
-| `memory_delete_fact` | Permanently delete fact |
-| `memory_traverse_graph` | BFS outward from seed concept (pheromone-weighted) |
-| `memory_find_path` | A* pathfinding between two concepts (pheromone / shortest / semantic) |
+| `memory_store_entity` | Store a named entity with typed properties |
+| `memory_get_entity` | Retrieve entity by name or ID |
+| `memory_list_entities` | List entities with prefix/type filter |
+| `memory_store_relation` | Store a typed relationship between entities |
+| `memory_get_relations` | Get all relations for an entity |
 
-### Procedural Memory (5 tools)
+### Graph Operations (5 tools)
+| Tool | Description |
+|------|-------------|
+| `memory_query_graph` | Structured graph query (Cypher-like) |
+| `memory_semantic_search` | Vector similarity search across memory types |
+| `memory_get_neighbors` | Get direct neighbors of a graph node |
+| `memory_find_path` | A* pathfinding between concepts (pheromone/shortest/semantic) |
+| `memory_traverse_graph` | BFS outward from seed concept (pheromone-weighted) |
+
+### Graph Direct (3 tools)
+| Tool | Description |
+|------|-------------|
+| `memory_graph_add_triple` | Add a (subject, predicate, object) triple directly |
+| `memory_graph_neighbors` | Get low-level graph neighbors of a node |
+| `memory_graph_shortest_path` | Shortest path between two nodes |
+
+### Procedural Memory (4 tools)
 | Tool | Description |
 |------|-------------|
 | `memory_store_procedure` | Store a goal-directed step sequence |
-| `memory_query_procedures` | Find procedures by goal description |
 | `memory_get_procedure` | Retrieve procedure with success/fail stats |
+| `memory_match_procedure` | Find best procedure for a goal description |
 | `memory_update_procedure` | Update steps or record execution outcome |
-| `memory_execute_procedure_lookup` | Find + return best procedure for a goal (primary retrieval) |
 
 ### Working Memory (4 tools)
 | Tool | Description |
@@ -241,20 +252,28 @@ print(f"Episodes: {stats['counts']['episodes']}, Facts: {stats['counts']['facts'
 | `memory_set_working` | Set key-value with optional TTL (<1ms p50) |
 | `memory_get_working` | Get value by key |
 | `memory_list_working` | List all keys (with prefix filter) |
-| `memory_clear_working` | Delete one key, by prefix, or all working memory |
+| `memory_clear_working` | Delete one key, by prefix, or all |
 
-### Shared Memory Spaces (3 tools)
+### Pheromone (2 tools)
 | Tool | Description |
 |------|-------------|
-| `memory_create_space` | Create a multi-agent shared knowledge space |
-| `memory_join_space` | Join an existing space with invite token |
-| `memory_query_space` | Query shared facts across all member agents |
+| `memory_deposit_pheromone` | Deposit pheromone trail on a memory path |
+| `memory_get_pheromone` | Get current pheromone weight for a path |
+
+### Shared Memory Spaces (5 tools)
+| Tool | Description |
+|------|-------------|
+| `memory_create_shared_space` | Create a multi-agent shared knowledge space |
+| `memory_join_shared_space` | Join an existing space with invite token |
+| `memory_shared_store_entity` | Store an entity in a shared space |
+| `memory_shared_query` | Query cross-agent memory within a shared space |
+| `memory_list_shared_spaces` | List shared spaces the agent belongs to |
 
 ### Utility (2 tools)
 | Tool | Description |
 |------|-------------|
-| `memory_health` | Service health check (Redis, storage, palace pool) |
-| `memory_stats` | Agent usage stats, counts, rate limit status |
+| `memory_get_stats` | Agent usage stats, counts, rate limit status |
+| `memory_delete_agent` | Delete all memory for an agent (irreversible) |
 
 ## MCP Protocol Details
 
