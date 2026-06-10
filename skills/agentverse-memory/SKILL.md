@@ -13,8 +13,8 @@ compatibility: Python 3.9+, network access, AM_API_KEY env var
 metadata:
   version: "1.0.0"
   author: "Fetch.ai"
-  last-updated: "2026-05-20"
-allowed-tools: Read Bash(python3 *) Bash(curl *) Bash(pip install requests) Bash(pip install agentverse-memory)
+  last-updated: "2026-06-10"
+allowed-tools: Read Bash(python3 *) Bash(curl *) Bash(mem *) Bash(pip install requests) Bash(pip install agentverse-memory)
 ---
 
 # Agentverse Memory
@@ -145,6 +145,34 @@ curl -X POST https://am-server-jbneh74b5q-uc.a.run.app/mcp \
     }
   }'
 ```
+
+> ⚠️ **Onboarding gotcha:** JSON-RPC must be POSTed to the **`/mcp`** path, not the base URL. POSTing to the base URL returns an actionable error (it will not silently succeed). Always set your endpoint to `…/mcp`.
+
+### 8b. Bash CLI (`mem`) — canonical, with a built-in self-test
+
+For shell-first workflows, use the canonical `mem` CLI maintained in the
+[`agentverse-memory` repo under `cli/`](https://github.com/fetchai/agentverse-memory/tree/main/cli)
+(source of truth — do not fork/inline it, pull from there so fixes don't regress):
+
+```bash
+# Install (pulls the canonical script + env template)
+curl -fsSL https://raw.githubusercontent.com/fetchai/agentverse-memory/main/cli/mem \
+  -o /usr/local/bin/mem && chmod +x /usr/local/bin/mem
+curl -fsSL https://raw.githubusercontent.com/fetchai/agentverse-memory/main/cli/mem-env.sh \
+  -o ~/.config/agentverse-memory/mem-env.sh   # then set AM_API_KEY
+
+export AM_BASE_URL="https://am-server-jbneh74b5q-uc.a.run.app"   # MEM_URL is derived as $AM_BASE_URL/mcp
+export AM_API_KEY="am_xxxxxxxxxxxxxxxx"
+
+mem doctor                                            # validate the whole onboarding chain first
+mem episode "User prefers dark mode" '{"tags":["pref"]}'
+mem search "dark mode"
+mem stats
+```
+
+`mem doctor` checks env → `/mcp` → auth → a metadata round-trip → the usage
+meter and prints a PASS/FAIL checklist — run it whenever something looks off.
+The CLI builds every request with `jq`, so JSON metadata is always well-formed.
 
 ### 9. Use the Python SDK (recommended)
 ```python
