@@ -10,7 +10,7 @@
 
 Give your AI coding agent (Claude Code, Codex, Copilot, Cursor, Gemini CLI) the ability to interact with any agent on [Agentverse](https://agentverse.ai) — search the agent registry, send messages, generate images, deploy code, and query the ASI:One LLM. Each skill is a self-contained Python script plus a `SKILL.md` that any AI coding agent can read and act on immediately.
 
-> **First-of-its-kind:** These are the first [SKILL.md-format](https://github.com/anthropics/skill-md-spec) skills for the Fetch.ai / ASI Alliance ecosystem.
+> **First-of-its-kind:** These are the first [SKILL.md-format](https://github.com/anthropics/skills) skills for the Fetch.ai / ASI Alliance ecosystem.
 
 ---
 
@@ -101,7 +101,7 @@ All scripts output JSON to stdout. Errors go to stderr. Exit code 0 on success, 
 
 ## 🤖 Using With AI Coding Assistants
 
-These skills follow the [SKILL.md specification](https://github.com/anthropics/skill-md-spec). Each skill directory contains a `SKILL.md` that your AI coding agent reads to understand what the skill does and how to invoke it.
+These skills follow the [SKILL.md specification](https://github.com/anthropics/skills). Each skill directory contains a `SKILL.md` that your AI coding agent reads to understand what the skill does and how to invoke it.
 
 **Example — Claude Code / Cursor / Copilot:**
 
@@ -233,7 +233,7 @@ py skills/agentverse-chat/scripts/agentverse_chat.py `
 |-------------|---------|
 | Python | 3.8 or higher |
 | Library | `requests` (`pip install requests`) |
-| API key | `AGENTVERSE_API_KEY` — get at [agentverse.ai/profile/api-keys](https://agentverse.ai/profile/api-keys) |
+| API key | `AGENTVERSE_API_KEY` — get at [agentverse.ai](https://agentverse.ai) → **Profile → API Keys** |
 | Optional | `ASI_ONE_API_KEY` — for `asi1-chat` skill only |
 
 ---
@@ -242,10 +242,11 @@ py skills/agentverse-chat/scripts/agentverse_chat.py `
 
 ```
 skills/
-├── agentverse-chat/          # Send messages to any Agentverse agent
+├── agentverse-memory/        # Persistent graph-native memory (35 MCP tools)
 │   ├── SKILL.md              # Skill definition (read by AI agents)
 │   ├── scripts/              # Self-contained Python scripts
 │   └── references/           # Deep API documentation
+├── agentverse-chat/          # Send messages to any Agentverse agent
 ├── agentverse-search/        # Search the Agentverse agent registry
 ├── agentverse-image-gen/     # Generate images via hosted agents
 ├── agentverse-deploy/        # Deploy Python code as a hosted agent
@@ -262,7 +263,7 @@ AGENTS.md                     # Technical guide for AI agents working on this re
 
 ## 🌐 About Agentverse
 
-[Agentverse](https://agentverse.ai) is Fetch.ai's platform for deploying and discovering AI agents. It's part of the [ASI Alliance](https://asi.ai) (Artificial Superintelligence Alliance) — a collaboration between Fetch.ai and SingularityNET.
+[Agentverse](https://agentverse.ai) is Fetch.ai's platform for deploying and discovering AI agents. It's part of the [ASI Alliance](https://superintelligence.io) (Artificial Superintelligence Alliance) — a collaboration between Fetch.ai and SingularityNET.
 
 Key concepts:
 - **Hosted Agents** — Python agents running on Agentverse infrastructure
@@ -293,7 +294,7 @@ Tested with all major AI coding assistants:
 - [Agentverse Platform](https://agentverse.ai)
 - [Fetch.ai Documentation](https://fetch.ai/docs)
 - [uAgents Framework](https://github.com/fetchai/uAgents)
-- [ASI Alliance](https://asi.ai)
+- [ASI Alliance](https://superintelligence.io)
 - [Agent Launch](https://agent-launch.ai) — AI Agent Token Launchpad on BSC
 
 ---
