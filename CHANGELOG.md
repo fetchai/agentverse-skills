@@ -8,6 +8,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Fixed
+
+- **`agentverse-memory` skill — corrected to match LIVE production** (skill `version` → 1.1.0). Several `memory_client.py` tool names were stale and returned `-32601 unknown tool`; they now match the live 35-tool MCP API: `memory_query_episodes`→`memory_search_episodes`, `memory_list_episodes`→`memory_get_episodes`, `memory_store_fact`→`memory_graph_add_triple`, `memory_query_facts`→`memory_query_graph`, `memory_execute_procedure_lookup`→`memory_match_procedure`, `memory_stats`→`memory_get_stats`. Also fixed argument names: `store-procedure` now sends `name` (was `goal`), `lookup-procedure` sends `task` (was `goal`), `traverse-graph` sends `start_id` (was `seed_concept`). Verified end-to-end against prod (`https://am-server-jbneh74b5q-uc.a.run.app`).
+- **`agentverse-memory` skill — key-mint and pricing docs corrected.** The free-key response field is `key` (not `api_key`) and the limit is `monthly_op_limit` (not `ops_per_month`); every example now reads the real shape. Pricing table corrected to canonical tiers: Explorer free **50,000 ops/mo** (was 10,000), Builder $19/mo **500,000 ops/mo** (was 100,000), Pro $99/mo **5,000,000 ops/mo** (was "Unlimited"), plus a new **Enterprise** (Custom: SLA, SOC 2, BYOC). Graph-at-every-tier (incl. free) framing kept.
+
+### Changed
+
+- **`agentverse-memory` skill — retrieval, pheromone, MCP-spec, and SDK clarifications:**
+  - Retrieval description corrected to the live behavior: default **hybrid** retrieval (TF-IDF lexical ∪ dense `text-embedding-3-small`, fused via Reciprocal Rank Fusion, k=60) — replaces the inaccurate "BM25 + HNSW + pheromone reranking". `memory_search_episodes` now documents `query`/`limit`/`use_hybrid`/`use_pheromone`/`max_content_chars` and reports `"retrieval":"hybrid"|"tfidf"`; `memory_client.py query-episodes` gained `--no-hybrid` / `--use-pheromone` flags. Zero-LLM-write ($0 ingest, <5ms writes) moat kept front and center.
+  - Pheromone reframed as **opt-in / default off** (warm-cache, repeated-access, and cross-agent multi-agent workloads) rather than a default per-query reranker.
+  - MCP protocol section reflects the completed MCP-spec migration: results now include `structuredContent` + `isError`; tool-execution failures are reported **in-band** (`isError:true` + `structuredContent.error{code,type,message}`) rather than as top-level JSON-RPC errors; five read tools declare `outputSchema`; the server negotiates protocol version up to RC `2026-07-28` (default `2025-11-25`). `memory_client.py` now surfaces in-band errors and prefers `structuredContent`.
+  - **SDK not-yet-published clarification:** PyPI `agentverse-memory` and npm `@fetchai/agentverse-memory` are not live yet — onboarding now leads with the bundled `scripts/memory_client.py` and raw curl/MCP, with a "SDK coming soon" note instead of `pip install agentverse-memory`.
+  - Documentation links repointed to verified-200 URLs (`https://fetchai.github.io/agentverse-memory/` and `/docs/`, `/docs/mcp`, `/docs/python-sdk`); removed dead `agentverse.ai/docs/*`, `/docs/api-reference`, and unpublished package/repo links.
+
 ### Added
 
 - **`public_url` field in image responses** ([#31](https://github.com/fetchai/agentverse-skills/issues/31)): When an image agent returns an `agent-storage://` URI, `generate_image.py` now also includes `public_url` — a direct HTTPS URL that can be opened in a browser or downloaded with `requests.get()`. `agentverse_chat.py` similarly enriches resource responses with `public_url` when present.
