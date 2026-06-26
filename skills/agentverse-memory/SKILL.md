@@ -12,7 +12,7 @@ description: >
 license: Apache-2.0
 compatibility: Python 3.9+, network access, AM_API_KEY env var
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   author: "Fetch.ai"
   last-updated: "2026-06-26"
 allowed-tools: Read Bash(python3 *) Bash(curl *) Bash(mem *) Bash(pip install requests)
@@ -288,6 +288,153 @@ JSON-RPC 2.0). Track SDK status at the docs site linked under
 | `max_content_chars` | integer | — | Optional: trim each result's content to N chars to save tokens |
 
 The result reports the retrieval mode used as `"retrieval": "hybrid"` or `"retrieval": "tfidf"`.
+
+## Tool Parameter Reference (all 35 tools)
+
+Complete parameters for every tool, grouped by memory type. Each tool's arguments
+go inside the JSON-RPC `params.arguments` object (see [Direct MCP call](#8-direct-mcp-call-curl)).
+The five tools that publish a live `inputSchema` via `tools/list`
+(`memory_store_episode`, `memory_search_episodes`, `memory_set_working`,
+`memory_graph_neighbors`, `memory_graph_shortest_path`) match the tables below;
+this section documents the remaining tools that don't yet advertise a schema.
+
+> **Conventions**
+> - **`agent_id` is *not* a tool argument.** Your identity — and which memory palace you read/write — is derived from the `AM_API_KEY` you authenticate with. (The `--agent-id` flag in `memory_client.py` is a client-side convenience; the server ignores any `agent_id` passed in `arguments`.)
+> - `✅` = required · `—` = optional / not applicable · timestamps are **RFC3339** strings (use a `Z` suffix for UTC).
+> - Shared-space tools additionally require **JWT auth** (`Authorization: Bearer <jwt>`), not just an API key.
+
+### Episodic Memory
+
+| Tool | Parameter | Type | Req | Default | Description |
+|------|-----------|------|:---:|---------|-------------|
+| `memory_store_episode` | `content` | string | ✅ | — | Episode text content |
+| | `metadata` | object | — | — | Structured metadata (chunk provenance merged in when content is split) |
+| | `valid_at` | string | — | now | Validity timestamp (RFC3339) |
+| | `chunk` | boolean | — | auto | Force (`true`) / disable (`false`) chunking; auto = chunk only when content > `chunk_threshold` |
+| | `chunk_threshold` | integer | — | 6000 | Auto-chunk content longer than this many chars |
+| | `chunk_size` | integer | — | 2800 | Target chunk size (chars) |
+| | `chunk_overlap` | integer | — | 450 | Overlap between consecutive chunks (chars) |
+| `memory_get_episodes` | `limit` | integer | — | 10 | Max episodes to return (most recent first) |
+| `memory_search_episodes` | `query` | string | ✅ | — | Search text — full detail in the [table above](#memory_search_episodes-parameters) |
+| | `limit` | integer | — | 12 | Max evidence items to return |
+| | `use_hybrid` | boolean | — | server default (**ON** in prod) | Fuse TF-IDF ∪ dense embeddings (RRF) |
+| | `use_pheromone` | boolean | — | server default (**OFF** in prod) | Re-rank by pheromone weight |
+| | `max_content_chars` | integer | — | no trim | Trim each result's content to N chars |
+| `memory_search_timeline` | `start_time` | string | ✅ | — | Window start (RFC3339) |
+| | `end_time` | string | ✅ | — | Window end (RFC3339) |
+| `memory_consolidate_episodes` | `before_time` | string | — | 7 days ago | Consolidate episodes older than this (RFC3339); those with pheromone weight < 0.1 are soft-deleted |
+
+### Entity Memory
+
+| Tool | Parameter | Type | Req | Default | Description |
+|------|-----------|------|:---:|---------|-------------|
+| `memory_store_entity` | `entity_id` | string | ✅ | — | Unique entity identifier / name |
+| | `type` | string | — | `"concept"` | Entity type |
+| | `description` | string | — | — | Human-readable description |
+| | `predicate` | string | — | — | Predicate (for subject-predicate-object facts) |
+| | `object_value` | string | — | — | Object value (for subject-predicate-object facts) |
+| | `properties` | object | — | — | Structured metadata (alias of `metadata`) |
+| | `metadata` | object | — | — | Structured metadata (takes precedence if both are sent) |
+| `memory_get_entity` | `entity_id` | string | ✅ | — | Entity id/name to fetch (returns `found:false` if absent) |
+| `memory_list_entities` | `limit` | integer | — | 20 | Max entities to return |
+| `memory_store_relation` | `from_id` | string | ✅ | — | Source entity (UUID **or** name; a new name is auto-created as a stub) |
+| | `to_id` | string | ✅ | — | Target entity (UUID **or** name; auto-created if new) |
+| | `predicate` | string | ✅ | — | Relation label |
+| | `weight` | number | — | 1.0 | Edge weight |
+| `memory_get_relations` | `entity_id` | string | ✅ | — | Entity id/name whose relations to fetch |
+
+### Graph Operations
+
+| Tool | Parameter | Type | Req | Default | Description |
+|------|-----------|------|:---:|---------|-------------|
+| `memory_query_graph` | `query` | string | ✅ | — | Keyword graph query text |
+| `memory_semantic_search` | `query` | string | ✅ | — | Search text (TF-IDF over entities) |
+| | `limit` | integer | — | 10 | Max results |
+| `memory_get_neighbors` | `entity_id` | string | ✅ | — | Entity id/name to expand from |
+| | `hops` | integer | — | 1 | Neighbor hop depth |
+| `memory_find_path` † | `from_id` | string | ✅ | — | Source node identifier |
+| | `to_id` | string | ✅ | — | Target node identifier |
+| | `max_hops` | integer | — | 6 | Maximum path length (hops) |
+| `memory_traverse_graph` | `start_id` | string | ✅ | — | Starting node identifier |
+| | `algorithm` | string `"bfs"`\|`"dfs"` | — | `"bfs"` | Traversal algorithm |
+| | `max_depth` | integer | — | 3 | Maximum traversal depth |
+
+> † `memory_find_path` (A* pathfinding) is **tier-gated**: lower tiers receive an in-band `-32002 forbidden` error. Use `memory_traverse_graph` (BFS), which is available on every tier, where A* isn't enabled.
+
+### Graph Direct (low-level triple store)
+
+| Tool | Parameter | Type | Req | Default | Description |
+|------|-----------|------|:---:|---------|-------------|
+| `memory_graph_add_triple` | `subject` | string | ✅ | — | Subject node label |
+| | `predicate` | string | ✅ | — | Predicate / edge label |
+| | `object` | string | ✅ | — | Object node label |
+| `memory_graph_neighbors` | `node` | string | ✅ | — | Starting node label |
+| | `depth` | integer | — | 1 | Hop depth (1–5; capped at 5) |
+| | `direction` | string `"outgoing"`\|`"incoming"`\|`"both"` | — | `"outgoing"` | Edge direction |
+| `memory_graph_shortest_path` | `from` | string | ✅ | — | Source node label |
+| | `to` | string | ✅ | — | Target node label |
+| | `undirected` | boolean | — | false | Traverse edges in both directions |
+
+### Procedural Memory
+
+| Tool | Parameter | Type | Req | Default | Description |
+|------|-----------|------|:---:|---------|-------------|
+| `memory_store_procedure` | `name` | string | ✅ | — | Procedure name |
+| | `description` | string | — | — | Description |
+| | `steps` | array&lt;string\|object&gt; | — | `[]` | Ordered steps: plain strings, or objects `{action, tool?, expected_output?}` |
+| | `tags` | array&lt;string&gt; | — | `[]` | Tags |
+| | `preconditions` | array&lt;string&gt; | — | `[]` | Preconditions |
+| `memory_get_procedure` | `procedure_id` | string | ✅* | — | Procedure UUID — *one of `procedure_id` / `name` required* |
+| | `name` | string | ✅* | — | Procedure name (alternative to `procedure_id`) |
+| `memory_match_procedure` | `task` | string | ✅ | — | Task description to match against stored procedures |
+| | `limit` | integer | — | 5 | Max procedures to return |
+| `memory_update_procedure` | `procedure_id` | string | ✅* | — | Procedure UUID to update — *one of `procedure_id` / `name` required* |
+| | `name` | string | ✅* | — | Procedure name (alternative to `procedure_id`) |
+| | `steps` | array&lt;string\|object&gt; | ✅ | — | New ordered steps (replaces old; creates a new version) |
+| | `reason` | string | — | — | Reason for the update |
+
+### Working Memory
+
+| Tool | Parameter | Type | Req | Default | Description |
+|------|-----------|------|:---:|---------|-------------|
+| `memory_set_working` | `key` | string | ✅ | — | Working memory key |
+| | `content` | string | ✅ | — | Value to store (`value` accepted as a legacy alias; non-strings are JSON-encoded) |
+| | `ttl_seconds` | integer | — | none (no expiry) | Time-to-live in seconds |
+| | `session_id` | string | — | — | Optional session scope |
+| `memory_get_working` | `key` | string | ✅ | — | Key to fetch (returns `found:false` if absent/expired) |
+| `memory_list_working` | *(none)* | — | — | — | Lists all live working-memory items |
+| `memory_clear_working` | `key` | string | — | — | Key to delete; **omit to clear ALL** working memory |
+
+### Pheromone
+
+| Tool | Parameter | Type | Req | Default | Description |
+|------|-----------|------|:---:|---------|-------------|
+| `memory_deposit_pheromone` | `node_id` | string | ✅ | — | Episode UUID or entity name/ID to reinforce |
+| | `strength` | number | — | 1.0 | Pheromone deposit strength |
+| `memory_get_pheromone` | `node_id` | string | ✅ | — | Episode UUID or entity name/ID to query |
+
+### Shared Memory Spaces (JWT auth required)
+
+| Tool | Parameter | Type | Req | Default | Description |
+|------|-----------|------|:---:|---------|-------------|
+| `memory_create_shared_space` | `name` | string | ✅ | — | Space name (1–128 characters) |
+| `memory_join_shared_space` | `space_id` | string | ✅ | — | Space ID to join (JWT must grant access to it) |
+| | `role` | string `"owner"`\|`"writer"`\|`"reader"` | — | `"writer"` | Requested role |
+| `memory_shared_store_entity` | `space_id` | string | ✅ | — | Space ID (requires writer/owner role) |
+| | `name` | string | ✅ | — | Entity name |
+| | `entity_type` | string | — | `"thing"` | Entity type |
+| | `description` | string | — | — | Description |
+| `memory_shared_query` | `space_id` | string | ✅ | — | Space ID (requires reader/writer/owner role) |
+| | `query` | string | — | `""` (list all) | Search query; empty/omitted lists all entities |
+| | `limit` | integer | — | 10 | Max results |
+| `memory_list_shared_spaces` | *(none)* | — | — | — | Lists shared spaces the agent belongs to |
+
+### Utility
+
+| Tool | Parameter | Type | Req | Default | Description |
+|------|-----------|------|:---:|---------|-------------|
+| `memory_get_stats` | *(none)* | — | — | — | Usage stats, memory counts, rate-limit status |
+| `memory_delete_agent` | `confirm` | boolean | ✅ | — | Must be `true` to permanently delete all of this agent's memory (irreversible, GDPR) |
 
 ## MCP Protocol Details
 
