@@ -137,17 +137,34 @@ def mcp_call(tool: str, arguments: Dict[str, Any], base_url: Optional[str] = Non
         return {"status": "error", "error": f"Invalid JSON response: {resp.text[:200]}"}
 
     if "error" in rpc:
+        # Top-level JSON-RPC error (e.g. unknown method, auth gate).
         return {"status": "error", "error": rpc["error"]}
 
-    # Extract inner JSON from MCP content envelope
-    try:
-        text = rpc["result"]["content"][0]["text"]
-        result = json.loads(text)
-    except (KeyError, IndexError, json.JSONDecodeError):
-        # Fallback: return raw result
-        result = rpc.get("result", rpc)
+    result_obj = rpc.get("result", {})
 
-    return result
+    # MCP-spec migration (#81): tool-execution errors are now reported
+    # IN-BAND as result.isError == true with a structured error payload,
+    # NOT as a top-level JSON-RPC error. Surface them as a CLI error.
+    if isinstance(result_obj, dict) and result_obj.get("isError"):
+        sc = result_obj.get("structuredContent") or {}
+        err = sc.get("error")
+        if err is None:
+            try:
+                err = result_obj["content"][0]["text"]
+            except (KeyError, IndexError, TypeError):
+                err = "tool execution error"
+        return {"status": "error", "error": err}
+
+    # Prefer the typed structuredContent payload (MCP-spec result shape).
+    if isinstance(result_obj, dict) and "structuredContent" in result_obj:
+        return result_obj["structuredContent"]
+
+    # Fallback: extract inner JSON from the text content envelope.
+    try:
+        text = result_obj["content"][0]["text"]
+        return json.loads(text)
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+        return result_obj if result_obj else rpc
 
 
 # ---------------------------------------------------------------------------
@@ -167,13 +184,17 @@ def cmd_query_episodes(args: argparse.Namespace) -> Any:
     arguments: Dict[str, Any] = {"agent_id": args.agent_id, "query": args.query, "limit": args.limit}
     if args.session_id:
         arguments["session_id"] = args.session_id
-    result = mcp_call("memory_query_episodes", arguments)
+    if args.use_hybrid is not None:
+        arguments["use_hybrid"] = args.use_hybrid
+    if args.use_pheromone:
+        arguments["use_pheromone"] = True
+    result = mcp_call("memory_search_episodes", arguments)
     return result
 
 
 def cmd_list_episodes(args: argparse.Namespace) -> Any:
     arguments: Dict[str, Any] = {"agent_id": args.agent_id, "limit": args.limit, "offset": args.offset}
-    return mcp_call("memory_list_episodes", arguments)
+    return mcp_call("memory_get_episodes", arguments)
 
 
 def cmd_store_fact(args: argparse.Namespace) -> Dict[str, Any]:
@@ -187,18 +208,18 @@ def cmd_store_fact(args: argparse.Namespace) -> Dict[str, Any]:
         arguments["confidence"] = args.confidence
     if args.source:
         arguments["source"] = args.source
-    return mcp_call("memory_store_fact", arguments)
+    return mcp_call("memory_graph_add_triple", arguments)
 
 
 def cmd_query_facts(args: argparse.Namespace) -> Any:
     arguments: Dict[str, Any] = {"agent_id": args.agent_id, "query": args.query, "limit": args.limit}
-    return mcp_call("memory_query_facts", arguments)
+    return mcp_call("memory_query_graph", arguments)
 
 
 def cmd_traverse_graph(args: argparse.Namespace) -> Any:
     arguments: Dict[str, Any] = {
         "agent_id": args.agent_id,
-        "seed_concept": args.seed,
+        "start_id": args.seed,
         "max_depth": args.depth,
         "limit": args.limit,
     }
@@ -219,7 +240,7 @@ def cmd_find_path(args: argparse.Namespace) -> Any:
 def cmd_store_procedure(args: argparse.Namespace) -> Dict[str, Any]:
     arguments: Dict[str, Any] = {
         "agent_id": args.agent_id,
-        "goal": args.goal,
+        "name": args.goal,
         "steps": args.steps,
     }
     return mcp_call("memory_store_procedure", arguments)
@@ -228,11 +249,11 @@ def cmd_store_procedure(args: argparse.Namespace) -> Dict[str, Any]:
 def cmd_lookup_procedure(args: argparse.Namespace) -> Any:
     arguments: Dict[str, Any] = {
         "agent_id": args.agent_id,
-        "goal": args.goal,
+        "task": args.goal,
     }
     if args.min_success_rate is not None:
         arguments["min_success_rate"] = args.min_success_rate
-    return mcp_call("memory_execute_procedure_lookup", arguments)
+    return mcp_call("memory_match_procedure", arguments)
 
 
 def cmd_set_working(args: argparse.Namespace) -> Dict[str, Any]:
@@ -270,7 +291,7 @@ def cmd_health(_args: argparse.Namespace) -> Any:
 
 
 def cmd_stats(args: argparse.Namespace) -> Any:
-    return mcp_call("memory_stats", {"agent_id": args.agent_id})
+    return mcp_call("memory_get_stats", {"agent_id": args.agent_id})
 
 
 def cmd_create_key(args: argparse.Namespace) -> Any:
@@ -294,7 +315,7 @@ def cmd_create_key(args: argparse.Namespace) -> Any:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="memory_client.py",
-        description="Agentverse Memory CLI — 29 MCP tools for AI agent memory",
+        description="Agentverse Memory CLI — 35 MCP tools for AI agent memory",
     )
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -306,11 +327,17 @@ def build_parser() -> argparse.ArgumentParser:
     ep.add_argument("--source", choices=["user", "agent", "tool", "external"], default="agent")
 
     # query-episodes
-    qe = sub.add_parser("query-episodes", help="Search episodic memories")
+    qe = sub.add_parser("query-episodes", help="Search episodic memories (hybrid TF-IDF + dense)")
     qe.add_argument("--agent-id", required=True)
     qe.add_argument("--query", required=True)
     qe.add_argument("--limit", type=int, default=10)
     qe.add_argument("--session-id")
+    # Default retrieval is hybrid (TF-IDF lexical ∪ dense embeddings, fused via RRF).
+    # Pass --no-hybrid to force lexical-only TF-IDF; --use-pheromone to re-rank by
+    # pheromone weight (best for warm/repeated-access workloads; off by default).
+    qe.add_argument("--use-hybrid", dest="use_hybrid", action="store_true", default=None)
+    qe.add_argument("--no-hybrid", dest="use_hybrid", action="store_false")
+    qe.add_argument("--use-pheromone", dest="use_pheromone", action="store_true", default=False)
 
     # list-episodes
     le = sub.add_parser("list-episodes", help="List recent episodic memories")
