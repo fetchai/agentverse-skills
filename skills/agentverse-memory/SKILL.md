@@ -12,7 +12,7 @@ description: >
 license: Apache-2.0
 compatibility: Python 3.9+, network access, AM_API_KEY env var
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   author: "Fetch.ai"
   last-updated: "2026-06-26"
 allowed-tools: Read Bash(python3 *) Bash(curl *) Bash(mem *) Bash(pip install requests)
@@ -266,7 +266,7 @@ JSON-RPC 2.0). Track SDK status at the docs site linked under
 | Tool | Description |
 |------|-------------|
 | `memory_create_shared_space` | Create a multi-agent shared knowledge space |
-| `memory_join_shared_space` | Join an existing space with an invite token |
+| `memory_join_shared_space` | Join a space by `space_id` (your JWT must grant access — see [Shared Spaces & JWT Authentication](#shared-spaces--jwt-authentication)) |
 | `memory_shared_store_entity` | Store an entity in a shared space |
 | `memory_shared_query` | Query cross-agent memory within a shared space |
 | `memory_list_shared_spaces` | List shared spaces the agent belongs to |
@@ -436,6 +436,83 @@ this section documents the remaining tools that don't yet advertise a schema.
 | `memory_get_stats` | *(none)* | — | — | — | Usage stats, memory counts, rate-limit status |
 | `memory_delete_agent` | `confirm` | boolean | ✅ | — | Must be `true` to permanently delete all of this agent's memory (irreversible, GDPR) |
 
+## Response Shapes (all 35 tools)
+
+The top-level keys in each tool's success payload (the `structuredContent` object — see
+[Tool call response](#mcp-protocol-details)). All shapes are verified against the live server.
+Failures instead return `isError:true` + `structuredContent.error{code,type,message}` (see [Edge Cases](#edge-cases)).
+
+### Episodic
+| Tool | Success payload (`structuredContent`) |
+|------|----------------------------------------|
+| `memory_store_episode` | `{ stored:true, id:"<uuid>", ids:["<uuid>", …], chunks:<int>, agent_id }` — `id` = first/only episode; `ids`/`chunks` reflect auto-chunking |
+| `memory_get_episodes` | `{ episodes:[ <Episode> … ], count:<int> }` *(outputSchema)* |
+| `memory_search_episodes` | `{ results:[ { episode, score, … } … ], count:<int>, retrieval:"hybrid"\|"tfidf" }` *(outputSchema)* |
+| `memory_search_timeline` | `{ episodes:[ … ], count:<int>, window:{ start, end } }` |
+| `memory_consolidate_episodes` | `{ consolidated:<int>, before:"<rfc3339>", note }` |
+
+### Entity
+| Tool | Success payload |
+|------|-----------------|
+| `memory_store_entity` | `{ id:"<uuid>", entity_id, stored:true }` |
+| `memory_get_entity` | found → `{ entity:<Entity>, found:true }` · absent → `{ found:false, entity_id }` |
+| `memory_list_entities` | `{ entities:[ … ], count:<int> }` *(outputSchema)* |
+| `memory_store_relation` | `{ id:"<uuid>", from_id, to_id, predicate, stored:true }` |
+| `memory_get_relations` | `{ relations:[ … ], count:<int>, entity_id }` |
+
+### Graph Operations
+| Tool | Success payload |
+|------|-----------------|
+| `memory_query_graph` | Backend graph-query result object (matched nodes/edges; shape is backend-defined) |
+| `memory_semantic_search` | `{ results:[ { entity, score } … ], count:<int> }` *(outputSchema)* |
+| `memory_get_neighbors` | `{ neighbors:[ … ], count:<int>, entity_id, hops:<int> }` |
+| `memory_find_path` | `{ path:[ … ], hops:<int>, from_id, to_id }` *(Pro+; else in-band `-32002`)* |
+| `memory_traverse_graph` | `{ visited:[ … ], count:<int>, start_id, algorithm, max_depth:<int> }` |
+
+### Graph Direct
+| Tool | Success payload |
+|------|-----------------|
+| `memory_graph_add_triple` | `{ stored:true, triple_id:"<uuid>", subject, predicate, object }` |
+| `memory_graph_neighbors` | `{ node, depth:<int>, direction, count:<int>, neighbors:[ { subject, predicate, object } … ] }` |
+| `memory_graph_shortest_path` | `{ from, to, undirected:<bool>, found:<bool>, hops:<int>, path:[ … ] }` |
+
+### Procedural
+| Tool | Success payload |
+|------|-----------------|
+| `memory_store_procedure` | `{ id:"<uuid>", name, stored:true }` |
+| `memory_get_procedure` | found → `{ procedure:<Procedure>, found:true }` · absent → `{ found:false, procedure_id }` |
+| `memory_match_procedure` | `{ results:[ … ], count:<int> }` |
+| `memory_update_procedure` | `{ new_id:"<uuid>", old_procedure_id, updated:true }` *(creates a new version)* |
+
+### Working
+| Tool | Success payload |
+|------|-----------------|
+| `memory_set_working` | `{ key, set:true, ttl_seconds }` |
+| `memory_get_working` | found → `{ item:<WorkingItem>, found:true }` · absent/expired → `{ found:false, key }` |
+| `memory_list_working` | `{ items:[ … ], count:<int> }` |
+| `memory_clear_working` | single key → `{ key, removed:<bool> }` · clear-all → `{ cleared:true, keys_deleted:<int> }` |
+
+### Pheromone
+| Tool | Success payload |
+|------|-----------------|
+| `memory_deposit_pheromone` | `{ node_id, new_weight:<float>, node_type:"episode"\|"entity" }` |
+| `memory_get_pheromone` | found → `{ node_id, weight:<float>, node_type }` · absent → `{ node_id, found:false }` |
+
+### Shared Spaces *(JWT auth)*
+| Tool | Success payload |
+|------|-----------------|
+| `memory_create_shared_space` | `{ space_id, name, owner_did, members:<int>, created_at:"<rfc3339>", status:"created" }` |
+| `memory_join_shared_space` | `{ space_id, agent_did, role, members:<int>, status:"joined" }` |
+| `memory_shared_store_entity` | `{ space_id, entity_id:"<uuid>", name, entity_type, stored_by, status:"stored" }` |
+| `memory_shared_query` | `{ space_id, query, count:<int>, results:[ { id, name, entity_type, description, score? } … ] }` *(`score` present only for non-empty queries)* |
+| `memory_list_shared_spaces` | `{ agent_did, count:<int>, spaces:[ { space_id, name, owner_did, my_role, member_count, created_at } … ] }` |
+
+### Utility
+| Tool | Success payload |
+|------|-----------------|
+| `memory_get_stats` | `{ agent_id, tier, monthly_ops_used:<int>, monthly_op_limit:<int>, memory:{ episode_count, entity_count, relation_count, procedure_count, working_count } }` *(outputSchema)* |
+| `memory_delete_agent` | `{ agent_id, deleted:true, note }` |
+
 ## MCP Protocol Details
 
 **Endpoint:** `POST https://am-server-jbneh74b5q-uc.a.run.app/mcp`
@@ -493,6 +570,53 @@ this section documents the remaining tools that don't yet advertise a schema.
 **Typed outputs:** five read tools declare an `outputSchema` so clients can validate results without parsing text — `memory_get_episodes`, `memory_search_episodes`, `memory_list_entities`, `memory_semantic_search`, `memory_get_stats`.
 
 **Tools list:** `POST /mcp` with `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
+
+## Shared Spaces & JWT Authentication
+
+The five `memory_*_shared_*` / `memory_create_shared_space` / `memory_join_shared_space` tools are
+**multi-agent** and need a different credential than the rest of the API.
+
+- **Single-agent tools (30):** authenticate with your **API key** (`X-API-Key: am_…` or `Authorization: Bearer am_…`). Fully self-serve via `POST /v1/keys`.
+- **Shared-space tools (5):** require a **JWT** (`Authorization: Bearer <jwt>`). An API-key-only request to any shared-space tool returns an **in-band** error:
+
+  ```json
+  { "isError": true,
+    "structuredContent": { "error": { "code": -32001, "type": "unauthorized",
+      "message": "unauthorized: Shared space operations require JWT authentication. Use 'Authorization: Bearer <jwt>' with a valid JWT token." } } }
+  ```
+
+### How to obtain a JWT (important — read this)
+
+> **There is no public self-serve JWT endpoint.** `POST /v1/keys` only issues API keys. JWTs are **HS256** tokens signed with the server's `JWT_SECRET`, which is held by the **Agentverse / ASI Chain identity layer** (or, for self-hosted/BYOC deployments, by whoever configured `JWT_SECRET`). In practice you obtain a shared-space JWT through Agentverse identity onboarding / enterprise provisioning — **shared spaces are not self-serviceable with just a free API key today.** If you only have an API key, use the 30 single-agent tools (all four memory types + graph work fully with an API key).
+
+If you *do* control the signing secret (self-hosted, enterprise, or testing), mint a conformant token with these claims — the server **pins HS256** and **requires** `sub`, `iss`, `aud`, `exp`, `iat`:
+
+| Claim | Required | Value / meaning |
+|-------|:---:|-----------------|
+| `sub` | ✅ | Agent DID — e.g. `did:fetch:agent123abc`. Becomes the space owner/member identity. |
+| `iss` | ✅ | Must be exactly `agentverse-memory`. |
+| `aud` | ✅ | Must be exactly `am-server`. |
+| `spaces` | — | Array of space IDs this token may access (`[]` when first creating a space). `join`/`store`/`query` require the target `space_id` to be present here. |
+| `tier` | — | `explorer`\|`builder`\|`pro`\|`enterprise`. Defaults to `pro` for JWT-authenticated agents. |
+| `exp` | ✅ | Expiry (Unix seconds, **numeric** — string `exp` is rejected, CVE-2026-25537). |
+| `iat` | ✅ | Issued-at (Unix seconds). |
+
+```json
+{ "sub": "did:fetch:agent123abc", "iss": "agentverse-memory", "aud": "am-server",
+  "spaces": ["space-id-1"], "tier": "pro", "exp": 1700000000, "iat": 1699900000 }
+```
+
+Wrong `iss`/`aud`/signature, an expired token, or a missing required claim are rejected at the auth gate
+(`jwt_invalid_issuer` / `jwt_invalid_audience` / `jwt_invalid_signature` / `jwt_expired` / `jwt_missing_claim`).
+
+### Typical multi-agent flow
+
+1. **Owner** (JWT) → `memory_create_shared_space {name}` → returns `space_id`.
+2. The identity layer issues each collaborator a JWT whose `spaces` claim **includes that `space_id`** (the server checks `spaces` membership, then the per-space role).
+3. **Members** (JWT) → `memory_join_shared_space {space_id, role}` → roles: `owner` > `writer` > `reader`.
+4. **Writers/owners** → `memory_shared_store_entity {space_id, name, …}`; **readers+** → `memory_shared_query {space_id, query}`; any member → `memory_list_shared_spaces`.
+
+Insufficient role within a space returns an in-band `-32002` (`forbidden`). Self-hosting? Set `JWT_SECRET` to enable JWT auth; if it is unset, JWT auth (and therefore shared spaces) is disabled.
 
 ## Pricing
 
