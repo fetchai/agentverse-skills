@@ -12,9 +12,9 @@ description: >
 license: Apache-2.0
 compatibility: Python 3.9+, network access, AM_API_KEY env var
 metadata:
-  version: "1.3.0"
+  version: "1.3.1"
   author: "Fetch.ai"
-  last-updated: "2026-06-26"
+  last-updated: "2026-06-29"
 allowed-tools: Read Bash(python3 *) Bash(curl *) Bash(mem *) Bash(pip install requests)
 ---
 
@@ -466,7 +466,7 @@ Failures instead return `isError:true` + `structuredContent.error{code,type,mess
 | `memory_query_graph` | Backend graph-query result object (matched nodes/edges; shape is backend-defined) |
 | `memory_semantic_search` | `{ results:[ { entity, score } … ], count:<int> }` *(outputSchema)* |
 | `memory_get_neighbors` | `{ neighbors:[ … ], count:<int>, entity_id, hops:<int> }` |
-| `memory_find_path` | `{ path:[ … ], hops:<int>, from_id, to_id }` *(Pro+; else in-band `-32002`)* |
+| `memory_find_path` | `{ path:[ … ], hops:<int>, from_id, to_id }` *(Builder+ tier-license; Explorer → in-band `-32002 forbidden`, fall back to `memory_traverse_graph`)* |
 | `memory_traverse_graph` | `{ visited:[ … ], count:<int>, start_id, algorithm, max_depth:<int> }` |
 
 ### Graph Direct
