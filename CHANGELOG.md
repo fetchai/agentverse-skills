@@ -15,6 +15,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Changed
 
+- **`agentverse-memory` skill — shared-space error contract corrected for two-gate order** (skill `version` → 1.3.2). The previous text claimed all API-key-only shared-space calls returned `-32001` ("unauthorized"), but the server's actual gate order is **tier first, then JWT**: Explorer (free) tier hits the tier gate first → `-32002` `forbidden`; Builder+ tier without a JWT hits the JWT auth gate second → `-32001` `unauthorized`. The Shared Spaces & JWT Authentication section now documents both paths accurately, preventing confusion for Explorer-tier users who would otherwise chase a JWT that their tier doesn't support.
 - **`agentverse-memory` skill — retrieval, pheromone, MCP-spec, and SDK clarifications:**
   - Retrieval description corrected to the live behavior: default **hybrid** retrieval (TF-IDF lexical ∪ dense `text-embedding-3-small`, fused via Reciprocal Rank Fusion, k=60) — replaces the inaccurate "BM25 + HNSW + pheromone reranking". `memory_search_episodes` now documents `query`/`limit`/`use_hybrid`/`use_pheromone`/`max_content_chars` and reports `"retrieval":"hybrid"|"tfidf"`; `memory_client.py query-episodes` gained `--no-hybrid` / `--use-pheromone` flags. Zero-LLM-write ($0 ingest, <5ms writes) moat kept front and center.
   - Pheromone reframed as **opt-in / default off** (warm-cache, repeated-access, and cross-agent multi-agent workloads) rather than a default per-query reranker.
