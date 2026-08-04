@@ -68,18 +68,25 @@ The script outputs JSON to stdout:
   ],
   "relay_agent": "agent1q...",
   "target": "agent1q...",
+  "run_id": "b17c4d2e",
+  "acknowledged": true,
   "wait_time_seconds": 12
 }
 ```
 
+`run_id` identifies this invocation — only responses tagged with it are
+returned, so a reused relay cannot answer with an earlier run's reply.
+`acknowledged` reports whether the target confirmed receipt of this message; it
+is diagnostic only, since an agent may reply without acknowledging.
+
 ## How It Works
 
-1. **Find relay agent**: Lists your hosted agents, picks one (or creates a new one)
+1. **Find relay agent**: Creates a relay named for this invocation, so concurrent runs never share one (pass `--relay` to pin an existing agent instead)
 2. **Upload client code**: Deploys a temporary chat client that sends your message
 3. **Start relay**: The relay sends a `ChatMessage` to the target agent
 4. **Wait for response**: Polls logs for `RESULT:` entries
 5. **Extract & return**: Parses responses (text, images, files) and returns JSON
-6. **Cleanup**: Stops the relay agent
+6. **Cleanup**: Stops the relay agent, and deletes it when it was auto-created for this invocation
 
 ## Critical Gotchas
 

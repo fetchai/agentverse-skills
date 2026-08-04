@@ -42,6 +42,7 @@ import re
 import sys
 import time
 from typing import Optional
+from uuid import uuid4
 
 # ---------------------------------------------------------------------------
 # Import shared relay utilities
@@ -51,12 +52,13 @@ sys.path.insert(0, _COMMON_DIR)
 from agentverse_relay import (  # noqa: E402
     BASE_URL,
     delete_agent,
+    extract_result_entries,
     extract_status,
     find_or_create_relay,
     get_api_key,
     get_logs,
     headers,
-    parse_result_entry,
+    latest_log_timestamp,
     resolve_public_url,
     set_logger,
     start_agent,
@@ -157,12 +159,31 @@ def search_image_agents(api_key: str) -> list:
     return agents
 
 
-def build_image_gen_code(target_address: str, prompt: str) -> str:
-    """Build hosted agent code that sends an image generation request."""
+def build_image_gen_code(
+    target_address: str,
+    prompt: str,
+    run_id: Optional[str] = None,
+    msg_id: Optional[str] = None,
+) -> str:
+    """Build hosted agent code that sends an image generation request.
+
+    Args:
+        target_address: The image agent to send the prompt to.
+        prompt: The image generation prompt.
+        run_id: Correlation id for this invocation. Every line the relay logs is
+            tagged with it so results can be told apart from ones left in the
+            log buffer by earlier runs. Generated if omitted.
+        msg_id: The outgoing ChatMessage's msg_id, generated here so the caller
+            knows it up front and can match the acknowledged_msg_id coming back.
+            Generated if omitted.
+    """
     escaped_prompt = prompt.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
+    run_id = run_id or uuid4().hex[:8]
+    msg_id = msg_id or str(uuid4())
+
     return f'''from datetime import datetime
-from uuid import uuid4
+from uuid import UUID
 from uagents import Context, Protocol
 from uagents_core.contrib.protocols.chat import (
     ChatMessage, ChatAcknowledgement, TextContent, chat_protocol_spec
@@ -170,6 +191,8 @@ from uagents_core.contrib.protocols.chat import (
 
 TARGET = "{target_address}"
 PROMPT = "{escaped_prompt}"
+RUN_ID = "{run_id}"
+MSG_ID = "{msg_id}"
 
 protocol = Protocol(spec=chat_protocol_spec)
 
@@ -178,13 +201,14 @@ async def send_prompt(ctx: Context):
     ctx.logger.info("IMAGE_STATUS:sending_prompt")
     await ctx.send(TARGET, ChatMessage(
         timestamp=datetime.now(),
-        msg_id=uuid4(),
+        msg_id=UUID(MSG_ID),
         content=[TextContent(type="text", text=PROMPT)],
     ))
     ctx.logger.info("IMAGE_STATUS:prompt_sent")
 
 @protocol.on_message(ChatAcknowledgement)
 async def handle_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
+    ctx.logger.info("IMAGE_ACK:" + RUN_ID + ":" + sender + ":" + str(msg.acknowledged_msg_id))
     ctx.logger.info("IMAGE_STATUS:ack_received")
 
 @protocol.on_message(ChatMessage)
@@ -193,9 +217,9 @@ async def handle_response(ctx: Context, sender: str, msg: ChatMessage):
     for item in msg.content:
         try:
             item_dict = item.dict() if hasattr(item, "dict") else str(item)
-            ctx.logger.info("RESULT:" + str(item_dict))
+            ctx.logger.info("RESULT:" + RUN_ID + ":" + sender + ":" + str(item_dict))
         except Exception as e:
-            ctx.logger.info("RESULT:" + repr(item))
+            ctx.logger.info("RESULT:" + RUN_ID + ":" + sender + ":" + repr(item))
 
 agent.include(protocol, publish_manifest=True)
 '''
@@ -301,13 +325,22 @@ def generate_image(
         relay: Optional relay agent address (auto-detected if None).
         cleanup: If True, delete the relay agent after use (when auto-created).
     """
+    # Correlation id for this invocation: names the session relay, tags every
+    # line the relay logs, and filters the results we are willing to accept.
+    run_id = uuid4().hex[:8]
+    msg_id = str(uuid4())
+
     # Find or create relay
     auto_created = False
+    session_relay = False
     if relay:
         agent_address = relay
     else:
-        agent_address = find_or_create_relay(api_key)
+        # Session relay: the name carries this invocation's id, so concurrent
+        # runs cannot stop, overwrite or read each other's relay (issue #14)
+        agent_address = find_or_create_relay(api_key, session_id=run_id)
         auto_created = True
+        session_relay = True
 
     log(f"Using relay agent: {agent_address}")
     log(f"Target image agent: {target}")
@@ -318,7 +351,11 @@ def generate_image(
         stop_agent(api_key, agent_address)
         time.sleep(2)
 
-        code = build_image_gen_code(target, prompt)
+        # Hosted agent logs survive the stop/upload/start cycle, so note how far
+        # the buffer already reaches — anything at or before this is not ours.
+        since = latest_log_timestamp(get_logs(api_key, agent_address)) or None
+
+        code = build_image_gen_code(target, prompt, run_id=run_id, msg_id=msg_id)
 
         log("Uploading code...")
         if not upload_code(api_key, agent_address, code):
@@ -342,7 +379,7 @@ def generate_image(
         log(f"Waiting up to {wait}s for image URL (not just acknowledgement)...")
         elapsed = 0
         poll_interval = 5
-        seen_entries = set()        # Composite key: "timestamp:msg_prefix"
+        seen_entries = set()        # Composite key: "timestamp:log_entry"
         all_results = []            # All parsed RESULT: entries seen so far
         image_url = None
         image_metadata = {}
@@ -356,22 +393,17 @@ def generate_image(
             if not logs:
                 continue
 
-            # Process only new log entries — use composite key to avoid
-            # timestamp dedup collisions (issue #20).
+            # Process only new log entries — the composite key avoids timestamp
+            # dedup collisions (issue #20), and the run id keeps entries left
+            # behind by earlier invocations out of this run entirely (issue #41).
             new_results_this_poll = []
-            for entry in sorted(logs, key=lambda x: x.get("log_timestamp", "")):
-                ts = entry.get("log_timestamp", "")
-                msg = entry.get("log_entry", "")
-                # Composite dedup key: timestamp + first 100 chars of message
-                entry_key = f"{ts}:{msg[:100]}"
+            for entry_key, parsed in extract_result_entries(
+                logs, since=since, run_id=run_id, expected_sender=target
+            ):
                 if entry_key in seen_entries:
                     continue
                 seen_entries.add(entry_key)
 
-                if not msg.startswith("RESULT:"):
-                    continue
-
-                parsed = parse_result_entry(msg[7:])
                 all_results.append(parsed)
                 new_results_this_poll.append(parsed)
 
@@ -414,6 +446,7 @@ def generate_image(
                 "metadata": image_metadata,
                 "target_agent": target,
                 "relay_agent": agent_address,
+                "run_id": run_id,
                 "wait_time_seconds": elapsed,
                 "all_responses": all_results,
             }
@@ -444,11 +477,16 @@ def generate_image(
             "prompt": prompt,
             "target_agent": target,
             "relay_agent": agent_address,
+            "run_id": run_id,
+            "msg_id": msg_id,
             "all_responses": all_results,
         }
     finally:
-        # Cleanup: delete the relay agent if --cleanup was requested and we auto-managed it
-        if cleanup and auto_created:
+        # Cleanup: delete the relay agent if --cleanup was requested and we
+        # auto-managed it. A session relay's name carries this invocation's id,
+        # so nothing can ever reuse it — always delete those, or they pile up
+        # against the hosted agent limit.
+        if auto_created and (cleanup or session_relay):
             log("Cleaning up relay agent...")
             if delete_agent(api_key, agent_address):
                 log(f"Relay agent deleted: {agent_address}")
@@ -484,7 +522,7 @@ def main():
     )
     parser.add_argument(
         "--cleanup", action="store_true",
-        help="Delete the relay agent after use (prevents accumulation of relay agents)",
+        help="Delete the relay agent after use (auto-created relays are per-invocation and always deleted)",
     )
     parser.add_argument(
         "--verbose", action="store_true",
