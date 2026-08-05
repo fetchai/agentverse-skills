@@ -171,7 +171,8 @@ class TestDeployAgent(unittest.TestCase):
     """Tests for agentverse-deploy skill.
 
     These tests create and then clean up agents. They require enough headroom
-    in the account's hosted-agent limit (8 by default).
+    in the account's hosted-agent limit, which is account dependent and not
+    published — if creation fails, the tests skip rather than fail.
     """
 
     DEPLOY_SCRIPT = os.path.join(SKILLS_ROOT, "agentverse-deploy", "scripts", "deploy_agent.py")
