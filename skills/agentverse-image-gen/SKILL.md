@@ -86,7 +86,7 @@ When the image comes back as an `agent-storage://` URI, the response also includ
 ## How It Works
 
 1. **Discover agent**: If no `--agent` specified, searches for image generation agents
-2. **Deploy relay**: Creates/reuses a hosted agent as a message relay
+2. **Deploy relay**: Creates a hosted relay agent named for this invocation (pass `--relay` to pin an existing agent instead)
 3. **Send prompt**: Sends `ChatMessage` with your prompt as `TextContent`
 4. **Wait for generation**: Image agents typically take 20-45 seconds
 5. **Extract URL**: Parses `ResourceContent` from response logs

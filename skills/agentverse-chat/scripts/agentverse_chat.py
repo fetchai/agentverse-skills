@@ -41,6 +41,7 @@ import re
 import sys
 import time
 from typing import Optional
+from uuid import uuid4
 
 # ---------------------------------------------------------------------------
 # Import shared relay utilities
@@ -51,12 +52,16 @@ from agentverse_relay import (  # noqa: E402
     BASE_URL,
     delete_agent,
     enrich_with_public_url,
+    extract_acks,
     extract_results,
     extract_status,
     find_or_create_relay,
     get_api_key,
     get_logs,
     headers,
+    is_answer_content,
+    is_terminal_content,
+    latest_log_timestamp,
     set_logger,
     start_agent,
     stop_agent,
@@ -82,7 +87,13 @@ def log(msg: str) -> None:
     print(f"[agentverse-chat] {msg}", file=sys.stderr)
 
 
-def build_chat_code(target_address: str, message: str, start_session: bool = False) -> str:
+def build_chat_code(
+    target_address: str,
+    message: str,
+    start_session: bool = False,
+    run_id: Optional[str] = None,
+    msg_id: Optional[str] = None,
+) -> str:
     """Build the hosted agent code that sends a chat message and captures response.
 
     Args:
@@ -91,9 +102,18 @@ def build_chat_code(target_address: str, message: str, start_session: bool = Fal
         start_session: If True, send a StartSessionContent message first before the
             ChatMessage. Some agents (particularly stateful or multi-turn agents)
             require this handshake before they will respond to messages.
+        run_id: Correlation id for this invocation. Every line the relay logs is
+            tagged with it so results can be told apart from ones left in the
+            log buffer by earlier runs. Generated if omitted.
+        msg_id: The outgoing ChatMessage's msg_id. Generated here rather than in
+            the relay so the caller knows it up front and can match it against
+            the acknowledged_msg_id the target sends back. Generated if omitted.
     """
     # Escape the message for embedding in Python source
     escaped_message = message.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+    run_id = run_id or uuid4().hex[:8]
+    msg_id = msg_id or str(uuid4())
 
     # Build the startup handler body depending on whether session init is needed
     if start_session:
@@ -109,7 +129,7 @@ def build_chat_code(target_address: str, message: str, start_session: bool = Fal
     ctx.logger.info("CHAT_STATUS:sending")
     await ctx.send(TARGET, ChatMessage(
         timestamp=datetime.now(),
-        msg_id=uuid4(),
+        msg_id=UUID(MSG_ID),
         content=[TextContent(type="text", text=MESSAGE)],
     ))
     ctx.logger.info("CHAT_STATUS:sent")'''
@@ -119,7 +139,7 @@ def build_chat_code(target_address: str, message: str, start_session: bool = Fal
         startup_body = f'''    ctx.logger.info("CHAT_STATUS:sending")
     await ctx.send(TARGET, ChatMessage(
         timestamp=datetime.now(),
-        msg_id=uuid4(),
+        msg_id=UUID(MSG_ID),
         content=[TextContent(type="text", text=MESSAGE)],
     ))
     ctx.logger.info("CHAT_STATUS:sent")'''
@@ -127,7 +147,7 @@ def build_chat_code(target_address: str, message: str, start_session: bool = Fal
         start_session_import = ""
 
     return f'''{extra_imports}from datetime import datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 from uagents import Context, Protocol
 from uagents_core.contrib.protocols.chat import (
     ChatMessage, ChatAcknowledgement, {start_session_import}TextContent, chat_protocol_spec
@@ -135,6 +155,8 @@ from uagents_core.contrib.protocols.chat import (
 
 TARGET = "{target_address}"
 MESSAGE = "{escaped_message}"
+RUN_ID = "{run_id}"
+MSG_ID = "{msg_id}"
 
 protocol = Protocol(spec=chat_protocol_spec)
 
@@ -144,6 +166,7 @@ async def send_msg(ctx: Context):
 
 @protocol.on_message(ChatAcknowledgement)
 async def handle_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
+    ctx.logger.info("CHAT_ACK:" + RUN_ID + ":" + sender + ":" + str(msg.acknowledged_msg_id))
     ctx.logger.info("CHAT_STATUS:ack_received")
 
 @protocol.on_message(ChatMessage)
@@ -152,9 +175,9 @@ async def handle_response(ctx: Context, sender: str, msg: ChatMessage):
     for item in msg.content:
         try:
             item_dict = item.dict() if hasattr(item, "dict") else str(item)
-            ctx.logger.info("RESULT:" + str(item_dict))
+            ctx.logger.info("RESULT:" + RUN_ID + ":" + sender + ":" + str(item_dict))
         except Exception as e:
-            ctx.logger.info("RESULT:" + repr(item))
+            ctx.logger.info("RESULT:" + RUN_ID + ":" + sender + ":" + repr(item))
 
 agent.include(protocol, publish_manifest=True)
 '''
@@ -167,6 +190,7 @@ def run_chat(
     relay: Optional[str],
     start_session: bool = False,
     cleanup: bool = False,
+    settle: int = 0,
 ) -> dict:
     """Execute the full chat workflow.
 
@@ -182,14 +206,23 @@ def run_chat(
     """
     api_key = get_api_key()
 
+    # Correlation id for this invocation: names the session relay, tags every
+    # line the relay logs, and filters the results we are willing to accept.
+    run_id = uuid4().hex[:8]
+    msg_id = str(uuid4())
+
     # Step 1: Find or create relay agent
     auto_created = False
+    session_relay = False
     if relay:
         agent_address = relay
         log(f"Using specified relay agent: {agent_address}")
     else:
-        agent_address = find_or_create_relay(api_key)
-        auto_created = True  # May have been found or created; safe to cleanup
+        # Session relay: the name carries this invocation's id, so concurrent
+        # runs cannot stop, overwrite or read each other's relay (issue #14)
+        agent_address = find_or_create_relay(api_key, session_id=run_id)
+        auto_created = True
+        session_relay = True
 
     try:
         # Step 2: Stop any running instance
@@ -197,9 +230,15 @@ def run_chat(
         stop_agent(api_key, agent_address)
         time.sleep(2)
 
+        # Hosted agent logs survive the stop/upload/start cycle, so note how far
+        # the buffer already reaches — anything at or before this is not ours.
+        since = latest_log_timestamp(get_logs(api_key, agent_address)) or None
+
         # Step 3: Build and upload code
         log(f"Building chat code for target: {target}" + (" (with session start)" if start_session else ""))
-        code = build_chat_code(target, message, start_session=start_session)
+        code = build_chat_code(
+            target, message, start_session=start_session, run_id=run_id, msg_id=msg_id
+        )
 
         log("Uploading code...")
         if not upload_code(api_key, agent_address, code):
@@ -213,33 +252,73 @@ def run_chat(
             return {"status": "error", "error": "Failed to start relay agent"}
 
         # Step 5: Wait for response
+        # The Chat Protocol places no upper bound on how many ChatMessages a
+        # target may send in reply to one inbound message, and nothing marks
+        # which of them is the answer. Stopping at the first RESULT: therefore
+        # returns a progress line, or a session welcome, as though it were the
+        # response (#42). Exit conditions, in order of confidence:
+        #
+        #   1. A terminal content item (end-session / end-stream). The target
+        #      has said it is finished. Unambiguous, and free.
+        #   2. An answer has arrived and `settle` seconds have passed with no
+        #      new content. With settle=0 -- the default -- this is exactly the
+        #      previous behaviour, so nobody pays latency they did not ask for.
+        #   3. `wait` expires.
+        #
+        # Bookkeeping items never satisfy (2) on their own: session and stream
+        # markers and attachment metadata are protocol control flow, not the
+        # reply the caller asked for. That part costs nothing and is on by
+        # default; collecting *later* messages is what costs time, so it is
+        # opt-in via --settle.
         log(f"Waiting {wait}s for response...")
         elapsed = 0
         poll_interval = 5
         results = []
+        logs = []
+        answered = False
+        last_result_count = 0
+        quiet_since = 0
 
         while elapsed < wait:
             time.sleep(poll_interval)
             elapsed += poll_interval
 
-            # Check logs for results
+            # Check logs for results — only ones this run's relay attributed to
+            # the agent we actually asked
             logs = get_logs(api_key, agent_address)
-            results = extract_results(logs)
-            status = extract_status(logs)
+            results = extract_results(
+                logs, since=since, run_id=run_id, expected_sender=target
+            )
+            status = extract_status(logs, since=since)
 
-            if results:
+            if len(results) > last_result_count:
+                last_result_count = len(results)
+                # New content arrived: restart the quiet period.
+                quiet_since = elapsed
+                if not answered:
+                    answered = any(is_answer_content(r) for r in results)
+
+            if any(is_terminal_content(r) for r in results):
+                log(f"Target signalled end of exchange after {elapsed}s "
+                    f"({len(results)} response(s))")
+                break
+
+            if answered and (elapsed - quiet_since) >= settle:
                 log(f"Got {len(results)} response(s) after {elapsed}s")
                 break
 
             if elapsed % 15 == 0:
-                log(f"  ...waiting ({elapsed}/{wait}s, status: {status})")
+                waiting_for = "follow-ups" if answered else "response"
+                log(f"  ...waiting for {waiting_for} ({elapsed}/{wait}s, status: {status})")
 
         # Step 6: Stop agent
         log("Stopping relay agent...")
         stop_agent(api_key, agent_address)
 
-        # Step 7: Return results
-        if results:
+        # Step 7: Return results.
+        # Bookkeeping-only content is not an answer, so a run that collected
+        # nothing but session markers is a timeout, not a success (#42).
+        if results and answered:
             # Enrich resource responses with direct browser-openable public_url
             # (converts agent-storage:// URIs to HTTPS URLs)
             results = enrich_with_public_url(results)
@@ -248,23 +327,44 @@ def run_chat(
                 "responses": results,
                 "relay_agent": agent_address,
                 "target": target,
+                "run_id": run_id,
+                # Reported only — a target may reply without ever acking, so
+                # this never decides whether the run succeeded.
+                "acknowledged": msg_id in extract_acks(
+                    logs, since=since, run_id=run_id, expected_sender=target
+                ),
                 "wait_time_seconds": elapsed,
             }
         else:
-            # Get final logs for debugging
+            # Get final logs for debugging — this run's only, so a reused relay
+            # does not pad the dump with an earlier run's lines
             final_logs = get_logs(api_key, agent_address)
-            log_entries = [e.get("log_entry", "") for e in sorted(final_logs, key=lambda x: x.get("log_timestamp", ""))]
+            sorted_final = sorted(final_logs, key=lambda x: x.get("log_timestamp", ""))
+            log_entries = [
+                e.get("log_entry", "") for e in sorted_final
+                if since is None or e.get("log_timestamp", "") > since
+            ]
             return {
                 "status": "timeout",
                 "error": f"No response received within {wait}s",
                 "relay_agent": agent_address,
                 "target": target,
-                "last_status": extract_status(final_logs),
+                "run_id": run_id,
+                "msg_id": msg_id,
+                # Distinguishes "the target never received it" from "it received
+                # the message and sent no reply".
+                "acknowledged": msg_id in extract_acks(
+                    final_logs, since=since, run_id=run_id, expected_sender=target
+                ),
+                "last_status": extract_status(final_logs, since=since),
                 "log_entries": log_entries[-10:],  # Last 10 log entries for debugging
             }
     finally:
-        # Cleanup: delete the relay agent if --cleanup was requested and we auto-managed it
-        if cleanup and auto_created:
+        # Cleanup: delete the relay agent if --cleanup was requested and we
+        # auto-managed it. A session relay's name carries this invocation's id,
+        # so nothing can ever reuse it — always delete those, or they pile up
+        # against the hosted agent limit.
+        if auto_created and (cleanup or session_relay):
             log("Cleaning up relay agent...")
             if delete_agent(api_key, agent_address):
                 log(f"Relay agent deleted: {agent_address}")
@@ -304,7 +404,19 @@ def main():
     )
     parser.add_argument(
         "--cleanup", action="store_true",
-        help="Delete the relay agent after use (prevents accumulation of relay agents)",
+        help="Delete the relay agent after use (auto-created relays are per-invocation and always deleted)",
+    )
+    parser.add_argument(
+        "--settle", type=int, default=0, metavar="SECONDS",
+        help=(
+            "After the first answer arrives, keep collecting for this many "
+            "seconds of quiet before returning. The Chat Protocol lets an "
+            "agent send several messages per reply with no general "
+            "end-of-turn marker, so agents that emit a progress line before "
+            "the answer need this. Default 0 = return on the first answer "
+            "(previous behaviour). end-session / end-stream still returns "
+            "immediately, so streaming agents never pay the wait."
+        ),
     )
     parser.add_argument(
         "--verbose", action="store_true",
@@ -330,6 +442,7 @@ def main():
         relay=args.relay,
         start_session=args.start_session,
         cleanup=args.cleanup,
+        settle=args.settle,
     )
 
     print(json.dumps(result, indent=2))
