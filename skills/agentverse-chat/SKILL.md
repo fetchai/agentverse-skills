@@ -84,7 +84,7 @@ is diagnostic only, since an agent may reply without acknowledging.
 1. **Find relay agent**: Creates a relay named for this invocation, so concurrent runs never share one (pass `--relay` to pin an existing agent instead)
 2. **Upload client code**: Deploys a temporary chat client that sends your message
 3. **Start relay**: The relay sends a `ChatMessage` to the target agent
-4. **Wait for response**: Polls logs for `RESULT:` entries
+4. **Wait for response**: Polls logs for `RESULT:` entries. Session and stream markers and attachment metadata are protocol bookkeeping, not an answer, so they never end the wait on their own. With `--settle N` the loop keeps collecting until `N` seconds pass with no new content, or until the target sends `end-session`/`end-stream`
 5. **Extract & return**: Parses responses (text, images, files) and returns JSON
 6. **Cleanup**: Stops the relay agent, and deletes it when it was auto-created for this invocation
 
@@ -95,6 +95,28 @@ is diagnostic only, since an agent may reply without acknowledging.
 - **F-strings**: Don't use list comprehensions inside f-strings in hosted code (parser bug)
 - **Logs are output**: Use `ctx.logger.info()` in hosted code — no stdout/stderr
 - **Timing**: ACK arrives in ~1s, text responses in ~3s, image generation in ~30s
+
+## Multi-message replies (`--settle`)
+
+Nothing in the Chat Protocol limits an agent to one `ChatMessage` per reply, and
+there is no general end-of-turn marker. Agents that emit a progress line before
+the answer — and any agent that answers a `--start-session` handshake before
+answering the question — will otherwise have their *first* message returned as
+the answer.
+
+```bash
+python3 scripts/agentverse_chat.py \
+  --target agent1q... \
+  --message "..." \
+  --settle 15 \
+  --wait 120
+```
+
+`--settle N` returns once `N` seconds pass with no new content from the target.
+It defaults to `0`, which is the original behaviour: return on the first answer,
+no added latency for anyone who does not opt in. An `end-session` or
+`end-stream` item returns immediately whatever `--settle` is set to, so
+streaming agents never pay the wait.
 
 ## Session Initiation (`--start-session`)
 
@@ -125,6 +147,7 @@ adding `--start-session` to trigger the session handshake.
 ## Edge Cases
 
 - **Agent not responding**: Increase `--wait` (some agents take 60s+)
+- **Got a progress line instead of the answer** ("Generating your image…", a session welcome): the target sent more than one message and the loop returned the first. Use `--settle 15` to keep collecting until the target goes quiet
 - **No response from a known-active agent**: Try `--start-session`
 - **"Unable to determine message model"**: Agent uses incompatible protocol version
 - **No hosted agents available**: Script auto-creates one (requires API key with write access)

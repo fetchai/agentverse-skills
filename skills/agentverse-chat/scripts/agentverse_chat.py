@@ -59,6 +59,8 @@ from agentverse_relay import (  # noqa: E402
     get_api_key,
     get_logs,
     headers,
+    is_answer_content,
+    is_terminal_content,
     latest_log_timestamp,
     set_logger,
     start_agent,
@@ -188,6 +190,7 @@ def run_chat(
     relay: Optional[str],
     start_session: bool = False,
     cleanup: bool = False,
+    settle: int = 0,
 ) -> dict:
     """Execute the full chat workflow.
 
@@ -249,11 +252,32 @@ def run_chat(
             return {"status": "error", "error": "Failed to start relay agent"}
 
         # Step 5: Wait for response
+        # The Chat Protocol places no upper bound on how many ChatMessages a
+        # target may send in reply to one inbound message, and nothing marks
+        # which of them is the answer. Stopping at the first RESULT: therefore
+        # returns a progress line, or a session welcome, as though it were the
+        # response (#42). Exit conditions, in order of confidence:
+        #
+        #   1. A terminal content item (end-session / end-stream). The target
+        #      has said it is finished. Unambiguous, and free.
+        #   2. An answer has arrived and `settle` seconds have passed with no
+        #      new content. With settle=0 -- the default -- this is exactly the
+        #      previous behaviour, so nobody pays latency they did not ask for.
+        #   3. `wait` expires.
+        #
+        # Bookkeeping items never satisfy (2) on their own: session and stream
+        # markers and attachment metadata are protocol control flow, not the
+        # reply the caller asked for. That part costs nothing and is on by
+        # default; collecting *later* messages is what costs time, so it is
+        # opt-in via --settle.
         log(f"Waiting {wait}s for response...")
         elapsed = 0
         poll_interval = 5
         results = []
         logs = []
+        answered = False
+        last_result_count = 0
+        quiet_since = 0
 
         while elapsed < wait:
             time.sleep(poll_interval)
@@ -267,19 +291,34 @@ def run_chat(
             )
             status = extract_status(logs, since=since)
 
-            if results:
+            if len(results) > last_result_count:
+                last_result_count = len(results)
+                # New content arrived: restart the quiet period.
+                quiet_since = elapsed
+                if not answered:
+                    answered = any(is_answer_content(r) for r in results)
+
+            if any(is_terminal_content(r) for r in results):
+                log(f"Target signalled end of exchange after {elapsed}s "
+                    f"({len(results)} response(s))")
+                break
+
+            if answered and (elapsed - quiet_since) >= settle:
                 log(f"Got {len(results)} response(s) after {elapsed}s")
                 break
 
             if elapsed % 15 == 0:
-                log(f"  ...waiting ({elapsed}/{wait}s, status: {status})")
+                waiting_for = "follow-ups" if answered else "response"
+                log(f"  ...waiting for {waiting_for} ({elapsed}/{wait}s, status: {status})")
 
         # Step 6: Stop agent
         log("Stopping relay agent...")
         stop_agent(api_key, agent_address)
 
-        # Step 7: Return results
-        if results:
+        # Step 7: Return results.
+        # Bookkeeping-only content is not an answer, so a run that collected
+        # nothing but session markers is a timeout, not a success (#42).
+        if results and answered:
             # Enrich resource responses with direct browser-openable public_url
             # (converts agent-storage:// URIs to HTTPS URLs)
             results = enrich_with_public_url(results)
@@ -368,6 +407,18 @@ def main():
         help="Delete the relay agent after use (auto-created relays are per-invocation and always deleted)",
     )
     parser.add_argument(
+        "--settle", type=int, default=0, metavar="SECONDS",
+        help=(
+            "After the first answer arrives, keep collecting for this many "
+            "seconds of quiet before returning. The Chat Protocol lets an "
+            "agent send several messages per reply with no general "
+            "end-of-turn marker, so agents that emit a progress line before "
+            "the answer need this. Default 0 = return on the first answer "
+            "(previous behaviour). end-session / end-stream still returns "
+            "immediately, so streaming agents never pay the wait."
+        ),
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Enable verbose logging to stderr",
     )
@@ -391,6 +442,7 @@ def main():
         relay=args.relay,
         start_session=args.start_session,
         cleanup=args.cleanup,
+        settle=args.settle,
     )
 
     print(json.dumps(result, indent=2))

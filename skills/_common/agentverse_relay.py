@@ -65,6 +65,20 @@ RELAY_AGENT_PREFIX = "agentverse-skills-relay"
 # ResourceContent).
 _UUID_RE = re.compile(r"\bUUID\('([0-9a-f-]+)'\)")
 
+# Chat-protocol content items that are bookkeeping rather than a reply to the
+# caller's question. Returning one of these as "the answer" is issue #42's
+# start-session case: the caller gets session metadata, never the response.
+NON_ANSWER_CONTENT_TYPES = frozenset({
+    "start-session",
+    "end-session",
+    "start-stream",
+    "end-stream",
+    "metadata",
+})
+
+# Content items that signal the target considers the exchange finished.
+TERMINAL_CONTENT_TYPES = frozenset({"end-session", "end-stream"})
+
 # Attributed RESULT: lines name the invocation that produced them:
 #
 #     RESULT:<run_id>:<sender>:<payload>
@@ -431,6 +445,34 @@ def split_result_entry(text: str) -> Tuple[Optional[str], Optional[str], str]:
     if not match:
         return None, None, text
     return match.group(1), match.group(2), text[match.end():]
+
+
+def _content_type_of(parsed):
+    """Best-effort chat-protocol content type of a parsed RESULT payload."""
+    if isinstance(parsed, dict):
+        content_type = parsed.get("type")
+        if isinstance(content_type, str):
+            return content_type
+    return None
+
+
+def is_answer_content(parsed) -> bool:
+    """True if a parsed result is a candidate *answer* rather than bookkeeping.
+
+    Session and stream markers and attachment metadata are part of the Chat
+    Protocol's control flow, not a reply to the caller's question. Treating one
+    of them as the answer is what makes ``--start-session`` return session
+    metadata instead of the agent's response (issue #42).
+
+    Anything not recognised as bookkeeping counts as an answer, so unknown and
+    future content types fail *open* and are still surfaced.
+    """
+    return _content_type_of(parsed) not in NON_ANSWER_CONTENT_TYPES
+
+
+def is_terminal_content(parsed) -> bool:
+    """True if a parsed result signals the target has finished this exchange."""
+    return _content_type_of(parsed) in TERMINAL_CONTENT_TYPES
 
 
 def latest_log_timestamp(logs: list) -> str:

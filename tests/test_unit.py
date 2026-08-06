@@ -38,6 +38,8 @@ try:
     import agentverse_relay
     from agentverse_relay import (
         _is_relay_agent,
+        is_answer_content,
+        is_terminal_content,
         extract_acks,
         extract_results,
         extract_status,
@@ -543,6 +545,122 @@ class TestCallSiteWiring(unittest.TestCase):
         result = chat.run_chat(target=TARGET_AGENT, message="Hello",
                                wait=10, relay="agent1qrelay")
         self.assertFalse(result["acknowledged"])
+
+
+# ---------------------------------------------------------------------------
+# Test the answer / bookkeeping distinction and the settle window (#42)
+# ---------------------------------------------------------------------------
+
+@unittest.skipUnless(HAS_COMMON_MODULE, "Shared module not available")
+class TestAnswerVsBookkeeping(unittest.TestCase):
+    """Session and stream markers are protocol control flow, not the answer."""
+
+    def test_text_is_an_answer(self):
+        self.assertTrue(is_answer_content({"type": "text", "text": "42"}))
+
+    def test_resource_is_an_answer(self):
+        self.assertTrue(is_answer_content({"type": "resource", "resource": {}}))
+
+    def test_bookkeeping_is_not_an_answer(self):
+        for content_type in ("start-session", "end-session", "start-stream",
+                             "end-stream", "metadata"):
+            with self.subTest(content_type=content_type):
+                self.assertFalse(is_answer_content({"type": content_type}))
+
+    def test_unknown_content_type_fails_open(self):
+        """A type we do not recognise must still be surfaced, not swallowed."""
+        self.assertTrue(is_answer_content({"type": "video-that-does-not-exist-yet"}))
+
+    def test_unparsed_payload_fails_open(self):
+        self.assertTrue(is_answer_content("RESULT: something we could not parse"))
+
+    def test_terminal_content(self):
+        self.assertTrue(is_terminal_content({"type": "end-session"}))
+        self.assertTrue(is_terminal_content({"type": "end-stream"}))
+        self.assertFalse(is_terminal_content({"type": "start-session"}))
+        self.assertFalse(is_terminal_content({"type": "text", "text": "42"}))
+        self.assertFalse(is_terminal_content("unparsed"))
+
+
+@unittest.skipUnless(HAS_COMMON_MODULE, "Shared module not available")
+class TestSettleWindow(unittest.TestCase):
+    """When the poll loop is allowed to stop (#42)."""
+
+    FILLER = {"type": "text", "text": "FILLER: working on it"}
+    ANSWER = {"type": "text", "text": "FINAL-ANSWER: 42"}
+
+    @staticmethod
+    def _buffer(schedule):
+        """Log buffer that grows with each poll.
+
+        `schedule` maps a 1-based poll number to the payloads present from that
+        poll onwards. get_logs is called once per poll after the watermark read,
+        which happens before the upload, so poll numbering starts at the first
+        call made with a run id in hand.
+        """
+        state = {"poll": 0, "entries": []}
+
+        def logs(seen):
+            if "run_id" not in seen:
+                return []
+            state["poll"] += 1
+            for payload in schedule.get(state["poll"], []):
+                state["entries"].append({
+                    "log_entry": _result_line(seen["run_id"], TARGET_AGENT, payload),
+                    "log_timestamp": "2026-08-04T11:00:%02d" % (state["poll"] * 5),
+                })
+            return list(state["entries"])
+
+        return logs
+
+    def _run(self, schedule, **kwargs):
+        chat = _load_script_module("agentverse-chat", "agentverse_chat.py")
+        _stub_network(chat, self._buffer(schedule))
+        return chat.run_chat(target=TARGET_AGENT, message="What is the answer?",
+                             wait=60, relay="agent1qrelay", **kwargs)
+
+    def test_settle_zero_is_the_previous_behaviour(self):
+        """The default must not cost anybody latency: first answer still wins."""
+        result = self._run({1: [self.FILLER], 3: [self.ANSWER]})
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["responses"], [self.FILLER])
+        self.assertEqual(result["wait_time_seconds"], 5)
+
+    def test_settle_collects_the_answer_after_a_filler(self):
+        """This is #42: the filler is not the answer, and settle waits for it."""
+        result = self._run({1: [self.FILLER], 3: [self.ANSWER]}, settle=15)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["responses"], [self.FILLER, self.ANSWER])
+
+    def test_a_late_message_extends_the_quiet_period(self):
+        """settle is a window of quiet, not a fixed delay after the answer.
+
+        Without restarting the window on new content this still returns the
+        first two messages and silently drops the third.
+        """
+        followup = {"type": "text", "text": "and one more thing"}
+        result = self._run({1: [self.FILLER], 3: [self.ANSWER], 6: [followup]},
+                           settle=15)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["responses"], [self.FILLER, self.ANSWER, followup])
+
+    def test_bookkeeping_alone_never_ends_the_wait(self):
+        """--start-session's metadata must not be returned as the answer."""
+        result = self._run({1: [{"type": "metadata", "metadata": {}}]})
+        self.assertEqual(result["status"], "timeout")
+        self.assertNotIn("responses", result)
+
+    def test_bookkeeping_then_answer_returns_the_answer(self):
+        result = self._run({1: [{"type": "metadata", "metadata": {}}],
+                            2: [self.ANSWER]})
+        self.assertEqual(result["status"], "success")
+        self.assertIn(self.ANSWER, result["responses"])
+
+    def test_terminal_content_returns_immediately_despite_settle(self):
+        """end-session means done, so a streaming agent never pays the wait."""
+        result = self._run({1: [self.ANSWER, {"type": "end-session"}]}, settle=45)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["wait_time_seconds"], 5)
 
 
 # ---------------------------------------------------------------------------
