@@ -44,6 +44,10 @@ jobs:
           done
           echo "✓ All skills have SKILL.md"
 
+      - name: Run unit tests
+        run: |
+          python3 tests/test_unit.py
+
       - name: Verify JSON output format (dry run)
         run: |
           for script in skills/*/scripts/*.py; do

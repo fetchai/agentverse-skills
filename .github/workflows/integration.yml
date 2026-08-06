@@ -43,7 +43,7 @@ jobs:
           echo "=== Running Agentverse Skills Integration Tests ==="
           python3 tests/test_integration.py
 
-      - name: Smoke-test: search returns results
+      - name: "Smoke-test: search returns results"
         env:
           AGENTVERSE_API_KEY: ${{ secrets.AGENTVERSE_API_KEY }}
         continue-on-error: true
@@ -59,7 +59,7 @@ jobs:
           print(f'✓ Search returned {data[\"total\"]} agents')
           "
 
-      - name: Smoke-test: list agents works
+      - name: "Smoke-test: list agents works"
         env:
           AGENTVERSE_API_KEY: ${{ secrets.AGENTVERSE_API_KEY }}
         continue-on-error: true
@@ -73,7 +73,7 @@ jobs:
           print(f'✓ Listed {data[\"total\"]} hosted agents')
           "
 
-      - name: Smoke-test: ASI:One returns a response
+      - name: "Smoke-test: ASI:One returns a response"
         env:
           ASI_ONE_API_KEY: ${{ secrets.ASI_ONE_API_KEY }}
         continue-on-error: true

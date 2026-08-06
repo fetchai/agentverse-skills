@@ -42,8 +42,10 @@ try:
         RELAY_AGENT_PREFIX,
     )
     HAS_COMMON_MODULE = True
-except ImportError:
+    _COMMON_IMPORT_ERROR = None
+except ImportError as exc:  # pragma: no cover - exercised only when broken
     HAS_COMMON_MODULE = False
+    _COMMON_IMPORT_ERROR = exc
 
 
 # ---------------------------------------------------------------------------
@@ -219,4 +221,22 @@ if __name__ == "__main__":
     suite = loader.loadTestsFromModule(sys.modules[__name__])
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
+
+    # Every test class here is guarded by skipUnless(HAS_COMMON_MODULE). If the
+    # shared module cannot be imported, the whole suite skips, wasSuccessful()
+    # is True and the run exits 0 -- indistinguishable from every test passing.
+    # Report what actually executed and refuse to call zero coverage a success.
+    executed = result.testsRun - len(result.skipped)
+    print(
+        "COVERAGE: %d of %d tests executed, %d skipped"
+        % (executed, result.testsRun, len(result.skipped))
+    )
+    if executed == 0:
+        print(
+            "VERDICT: FAIL - no tests executed. skills/_common/agentverse_relay.py "
+            "could not be imported: %r" % (_COMMON_IMPORT_ERROR,),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print("VERDICT: %s" % ("PASS" if result.wasSuccessful() else "FAIL"))
     sys.exit(0 if result.wasSuccessful() else 1)
